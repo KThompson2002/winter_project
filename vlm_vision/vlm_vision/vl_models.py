@@ -24,7 +24,7 @@ class VisionPipeline:
         self,
         *,
         device: str = "cpu",
-        use_sam: bool = False,
+        # use_sam: bool = False,
         grounding_dino_model_id: str = "IDEA-Research/grounding-dino-tiny",
         clip_model_id: str = "openai/clip-vit-base-patch32",
         text_prompt: str = "a person. a backpack. a chair. a table. a door.",
@@ -34,7 +34,7 @@ class VisionPipeline:
         clip_top_k: int = 1,
     ) -> None:
         self.device_str = device
-        self.use_sam = bool(use_sam)
+        # self.use_sam = bool(use_sam)
         self.gdino_model_id = grounding_dino_model_id
         self.clip_model_id = clip_model_id
         self.text_prompt = text_prompt
@@ -94,7 +94,7 @@ class VisionPipeline:
         depth: np.ndarray,
         intrinsics: Tuple[float, float, float, float],
     ) -> Tuple[List[Detection], np.ndarray]:
-        """Run GroundingDINO+SAM+CLIP on an RGB-D frame.
+        """Run GroundingDINO+CLIP on an RGB-D frame.
 
         Args:
             rgb: HxWx3 uint8 RGB image.
@@ -135,7 +135,7 @@ class VisionPipeline:
         detections: List[Detection] = []
         for i in range(len(boxes_xyxy)):
             x1, y1, x2, y2 = boxes_xyxy[i].tolist()
-            x1i, y1i, x2i, y2i = self._pad_and_clip_box(x1, y1, x2, y2, w, h, self.sam_box_padding_px)
+            x1i, y1i, x2i, y2i = self._pad_and_clip_box(x1, y1, x2, y2, w, h, 4)
 
             # NOTE: no SAM, so do NOT pass a mask
             clip_label, clip_score = self._clip_label_region(rgb, (x1i, y1i, x2i, y2i))
@@ -178,22 +178,34 @@ class VisionPipeline:
 
         return self.clip_labels[best], float(probs[best].item())
     
-    
     @staticmethod
-    def _estimate_xyz_from_mask(
+    def _estimate_xyz_from_box(
         depth: np.ndarray,
-        mask: np.ndarray,
+        box_xyxy: Tuple[int, int, int, int],
         intrinsics: Tuple[float, float, float, float],
     ) -> Optional[Tuple[float, float, float]]:
-        """Estimate one 3D point (x,y,z) for the region using mask median pixel and aligned depth."""
+        """Estimate one 3D point (x,y,z) using the BOX CENTER pixel and aligned depth.
+
+        Args:
+            depth: HxW aligned depth image. uint16 (mm) or float32/float64 (m).
+            box_xyxy: (x1, y1, x2, y2) box in pixel coords.
+            intrinsics: (fx, fy, cx, cy)
+
+        Returns:
+            (x_m, y_m, z_m) in meters, or None if depth invalid.
+        """
         fx, fy, cx, cy = intrinsics
+        x1, y1, x2, y2 = box_xyxy
 
-        ys, xs = np.where(mask)
-        if xs.size < 10:
-            return None
+        # Box center pixel (integer)
+        u = int((x1 + x2) / 2)
+        v = int((y1 + y2) / 2)
 
-        u = int(np.median(xs))
-        v = int(np.median(ys))
+        # Clamp to image bounds (defensive)
+        h, w = depth.shape[:2]
+        u = max(0, min(w - 1, u))
+        v = max(0, min(h - 1, v))
+
         z = depth[v, u]
 
         # RealSense often gives uint16 depth in millimeters
@@ -202,12 +214,43 @@ class VisionPipeline:
         else:
             z_m = float(z)
 
+        # Basic validity checks
         if not np.isfinite(z_m) or z_m <= 0.05:
             return None
 
         x_m = (u - cx) * z_m / fx
         y_m = (v - cy) * z_m / fy
         return (float(x_m), float(y_m), float(z_m))
+
+    # @staticmethod
+    # def _estimate_xyz_from_mask(
+    #     depth: np.ndarray,
+    #     mask: np.ndarray,
+    #     intrinsics: Tuple[float, float, float, float],
+    # ) -> Optional[Tuple[float, float, float]]:
+    #     """Estimate one 3D point (x,y,z) for the region using mask median pixel and aligned depth."""
+    #     fx, fy, cx, cy = intrinsics
+
+    #     ys, xs = np.where(mask)
+    #     if xs.size < 10:
+    #         return None
+
+    #     u = int(np.median(xs))
+    #     v = int(np.median(ys))
+    #     z = depth[v, u]
+
+    #     # RealSense often gives uint16 depth in millimeters
+    #     if depth.dtype == np.uint16:
+    #         z_m = float(z) / 1000.0
+    #     else:
+    #         z_m = float(z)
+
+    #     if not np.isfinite(z_m) or z_m <= 0.05:
+    #         return None
+
+    #     x_m = (u - cx) * z_m / fx
+    #     y_m = (v - cy) * z_m / fy
+    #     return (float(x_m), float(y_m), float(z_m))
 
     @staticmethod
     def _pad_and_clip_box(

@@ -5,6 +5,7 @@
         <arg name="rgb_camera.color_profile" value="640x480x60"/> -->
     </include>
 
-    <node pkg="vlm_vision" exec="vision">
-    </node>
+    <node pkg="vlm_vision" exec="vision"/>
+
+    <node pkg="rviz2" exec="rviz2" args="-d $(find-pkg-share vlm_vision)/config/vlm_vision.rviz"/>
 </launch>

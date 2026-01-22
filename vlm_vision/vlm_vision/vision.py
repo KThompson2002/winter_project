@@ -11,7 +11,7 @@ from sensor_msgs.msg import CameraInfo, Image
 
 import json
 from typing import Any, Dict, List, Optional, Tuple
-from vl_models import VisionPipeline, Detection
+from . import vl_models
 from std_msgs.msg import String
 
 
@@ -46,6 +46,11 @@ class Vision(Node):
             ParameterDescriptor(type=ParameterType.PARAMETER_STRING)
         )
         self.declare_parameter(
+            "device",
+            "cuda",
+            ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
+        )
+        self.declare_parameter(
             "inference_hz",
             2.0,
             ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE),
@@ -66,6 +71,17 @@ class Vision(Node):
             ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
         )
         self.declare_parameter(
+            "box_threshold",
+            0.35,
+            ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE),
+        )
+        self.declare_parameter(
+            "text_threshold",
+            0.25,
+            ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE),
+        )
+        
+        self.declare_parameter(
             "clip_labels",
             [
                 "a person",
@@ -79,12 +95,19 @@ class Vision(Node):
             ],
             ParameterDescriptor(type=ParameterType.PARAMETER_STRING_ARRAY),
         )
+        self.declare_parameter(
+            "clip_top_k",
+            1,
+            ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER),
+        )
 
         self.image_topic = self.get_parameter('image_topic').value
         self.color_image_topic = self.get_parameter('color_image_topic').value
         self.depth_image_topic = self.get_parameter('depth_image_topic').value
         self.camera_info_topic = self.get_parameter('camera_info_topic').value
 
+        self.inference_hz = float(self.get_parameter("inference_hz").value)
+        self.device = str(self.get_parameter("device").value)
         #Subscribers # noqa: E26
         self.color_sub = Subscriber(
             self,
@@ -109,7 +132,7 @@ class Vision(Node):
             slop=0.05  # 50 ms tolerance
         )
         self.ts.registerCallback(self.synced_callback)
-        
+
         self.pipeline_cfg: Dict[str, Any] = {
             "device": self.device,
             "grounding_dino_model_id": str(self.get_parameter("grounding_dino_model_id").value),
@@ -125,7 +148,7 @@ class Vision(Node):
         self.bridge = CvBridge()
         period = 1.0 / max(self.inference_hz, 0.1)
         self.timer = self.create_timer(period, self.timer_callback)
-        self.pipeline = VisionPipeline(**self.pipeline_cfg)
+        self.pipeline = vl_models.VisionPipeline(**self.pipeline_cfg)
         self.get_logger().info("Pipeline initialized.")
 
         self.image_pub = self.create_publisher(
@@ -133,7 +156,6 @@ class Vision(Node):
             self.image_topic + '_axes',
             10
         )
-        
         #Attributes # noqa: E26
         self.intrinsics: Optional[Tuple[float, float, float, float]] = None
         self.got_intrinsics = False
@@ -151,28 +173,34 @@ class Vision(Node):
         self.dets_pub = self.create_publisher(
             String, self.image_topic + "_detections", 10
         )
+        self.overlay_pub = self.create_publisher(
+            Image,
+            self.image_topic + "_overlay",
+            10
+        )
 
     def timer_callback(self):
         """Activates camera."""
         if not self.got_intrinsics or self.intrinsics is None:
             return
 
-        if self.color_img is None or self.depth_img is None:
-            self.get_logger().warn('Waiting for images...')
+        if self.color_msg is None or self.depth_msg is None:
+            self.get_logger().warn("Waiting for images...")
             return
+        
         try:
             bgr = self.bridge.imgmsg_to_cv2(self.color_msg, desired_encoding="bgr8")
             depth = self.bridge.imgmsg_to_cv2(self.depth_msg)
         except Exception as e:
             self.get_logger().error(f"cv_bridge conversion failed: {e}")
             return
-        
+
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
         detections, overlay_rgb = self.pipeline.infer(
             rgb=rgb, depth=depth, intrinsics=self.intrinsics
         )
-        
+
         # Publish overlay
         try:
             overlay_bgr = cv2.cvtColor(overlay_rgb, cv2.COLOR_RGB2BGR)
@@ -205,7 +233,7 @@ class Vision(Node):
         msg = String()
         msg.data = json.dumps(payload)
         self.dets_pub.publish(msg)
-        
+
         # OLD CODE: Previous Iteration implementation
         # color_img = self.bridge.imgmsg_to_cv2(
         #     self.color_img,
@@ -215,11 +243,10 @@ class Vision(Node):
         # mask_msg = self.bridge.cv2_to_imgmsg(color_img)
         # self.image_pub.publish(mask_msg)
 
-
     def synced_callback(self, color_msg, depth_msg):
         """Sync callback for color and depth."""
-        self.color_img = color_msg
-        self.depth_img = depth_msg
+        self.color_msg = color_msg
+        self.depth_msg = depth_msg
 
     def camera_info_callback(self, msg):
         """Camera info callback."""
