@@ -10,6 +10,7 @@ from rclpy.qos import QoSProfile
 from sensor_msgs.msg import CameraInfo, Image
 
 import json
+import time
 from typing import Any, Dict, List, Optional, Tuple
 from . import vl_models
 from std_msgs.msg import String
@@ -47,12 +48,12 @@ class Vision(Node):
         )
         self.declare_parameter(
             "device",
-            "cuda",
+            "cpu",
             ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
         )
         self.declare_parameter(
             "inference_hz",
-            2.0,
+            1.0,
             ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE),
         )
         self.declare_parameter(
@@ -187,7 +188,13 @@ class Vision(Node):
         if self.color_msg is None or self.depth_msg is None:
             self.get_logger().warn("Waiting for images...")
             return
-        
+
+        now = time.time()
+        # extra throttle (timers can jitter)
+        if now - self._last_infer_t < (1.0 / max(self.inference_hz, 0.1)) * 0.5:
+            return
+        self._last_infer_t = now
+
         try:
             bgr = self.bridge.imgmsg_to_cv2(self.color_msg, desired_encoding="bgr8")
             depth = self.bridge.imgmsg_to_cv2(self.depth_msg)
