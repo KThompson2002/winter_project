@@ -130,7 +130,7 @@ class Vision(Node):
         self.camera_info_topic = self.get_parameter('camera_info_topic').value
 
         self.inference_hz = float(self.get_parameter("inference_hz").value)
-        self.device = str(self.get_parameter("device").value)
+        # self.device = str(self.get_parameter("device").value)
 
         # API Parameters
         self.server_infer_url = str(self.get_parameter("server_infer_url").value)

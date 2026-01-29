@@ -90,8 +90,35 @@ class VisionPipeline:
                 return_tensors="pt",
                 padding=True,
             ).to(self._device)
-            text_feats = self.clip_model.get_text_features(**text_inputs)
-            self.clip_text_features = text_feats / text_feats.norm(dim=-1, keepdim=True)
+            # text_feats = self.clip_model.get_text_features(**text_inputs)
+            # self.clip_text_features = text_feats / text_feats.norm(dim=-1, keepdim=True)
+            with torch.no_grad():
+                text_inputs = self.clip_processor(
+                    text=self.clip_labels,
+                    return_tensors="pt",
+                    padding=True,
+                ).to(self._device)
+
+                out = self.clip_model(**text_inputs)
+
+                # Transformers CLIPModel returns a CLIPOutput with .text_embeds
+                text_feats = getattr(out, "text_embeds", None)
+
+                # Fallbacks for older/odd variants
+                if text_feats is None:
+                    # Sometimes model outputs are nested; try common places
+                    if hasattr(out, "pooler_output"):
+                        text_feats = out.pooler_output
+                    elif hasattr(out, "last_hidden_state"):
+                        # mean pool as a last resort
+                        text_feats = out.last_hidden_state.mean(dim=1)
+                    else:
+                        raise RuntimeError(f"Could not find text embeddings in CLIP output: {type(out)}")
+
+                text_feats = text_feats.float()
+                self.clip_text_features = text_feats / text_feats.norm(dim=-1, keepdim=True)
+
+
 
     def infer(
         self,
@@ -172,8 +199,24 @@ class VisionPipeline:
 
         inputs = self.clip_processor(images=crop, return_tensors="pt").to(self._device)
         with self.torch.no_grad():
-            img_feat = self.clip_model.get_image_features(**inputs)
-            img_feat = img_feat / img_feat.norm(dim=-1, keepdim=True)
+            # img_feat = self.clip_model.get_image_features(**inputs)
+            # img_feat = img_feat / img_feat.norm(dim=-1, keepdim=True)
+            with self.torch.no_grad():
+                out = self.clip_model(**inputs)
+                img_feat = getattr(out, "image_embeds", None)
+                if img_feat is None:
+                    if hasattr(out, "pooler_output"):
+                        img_feat = out.pooler_output
+                    elif hasattr(out, "last_hidden_state"):
+                        img_feat = out.last_hidden_state.mean(dim=1)
+                    else:
+                        raise RuntimeError(f"Could not find image embeddings in CLIP output: {type(out)}")
+
+                img_feat = img_feat.float()
+                img_feat = img_feat / img_feat.norm(dim=-1, keepdim=True)
+                sims = (img_feat @ self.clip_text_features.T).squeeze(0)
+                probs = self.torch.softmax(sims, dim=-1)
+                best = int(self.torch.argmax(probs).item())
             sims = (img_feat @ self.clip_text_features.T).squeeze(0)
             probs = self.torch.softmax(sims, dim=-1)
             best = int(self.torch.argmax(probs).item())
