@@ -94,20 +94,6 @@ def build_phrases(spec: SearchSpec) -> Tuple[str, List[str]]:
 
     return pos, negs
 
-@staticmethod
-def _draw_mask_overlay(img_rgb: np.ndarray, mask: np.ndarray) -> None:
-    """
-    img_rgb: HxWx3 uint8
-    mask: HxW uint8/bool
-    """
-    m = mask.astype(bool)
-    if not np.any(m):
-        return
-
-    # Simple translucent green fill (no extra deps)
-    # (avoid float-ing the whole image; only operate on masked pixels)
-    img_rgb[m] = (0.65 * img_rgb[m] + 0.35 * np.array([0, 255, 0], dtype=np.uint8)).astype(np.uint8)
-
 
 # Model Classes:
 @dataclass
@@ -585,4 +571,17 @@ class VisionPipeline:
         masks = masks[:, 0, :, :]  # (K, H, W)
         masks = (masks > 0).to(torch.uint8).numpy()
         return masks
+    
+    @staticmethod
+    def _draw_mask_overlay(img_rgb: np.ndarray, mask: np.ndarray) -> None:
+        """
+        img_rgb: HxWx3 uint8
+        mask: HxW uint8/bool
+        """
+        m = mask.astype(bool)
+        if not np.any(m):
+            return
 
+        # Simple translucent green fill (no extra deps)
+        # (avoid float-ing the whole image; only operate on masked pixels)
+        img_rgb[m] = (0.65 * img_rgb[m] + 0.35 * np.array([0, 255, 0], dtype=np.uint8)).astype(np.uint8)
