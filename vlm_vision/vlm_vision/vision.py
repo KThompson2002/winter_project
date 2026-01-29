@@ -1,9 +1,14 @@
 from enum import auto, Enum
+import io
+import zipfile
 
 from cv_bridge import CvBridge
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 import cv2
+import numpy as np
+import requests
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
@@ -12,7 +17,7 @@ from sensor_msgs.msg import CameraInfo, Image
 import json
 import time
 from typing import Any, Dict, List, Optional, Tuple
-from . import vl_models
+# from . import vl_models
 from std_msgs.msg import String
 
 
@@ -46,26 +51,26 @@ class Vision(Node):
             '/camera/camera/color/camera_info',
             ParameterDescriptor(type=ParameterType.PARAMETER_STRING)
         )
-        self.declare_parameter(
-            "device",
-            "cpu",
-            ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
-        )
+        # self.declare_parameter(
+        #     "device",
+        #     "cpu",
+        #     ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
+        # )
         self.declare_parameter(
             "inference_hz",
             1.0,
             ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE),
         )
-        self.declare_parameter(
-            "grounding_dino_model_id",
-            "IDEA-Research/grounding-dino-tiny",
-            ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
-        )
-        self.declare_parameter(
-            "clip_model_id",
-            "openai/clip-vit-base-patch32",
-            ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
-        )
+        # self.declare_parameter(
+        #     "grounding_dino_model_id",
+        #     "IDEA-Research/grounding-dino-tiny",
+        #     ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
+        # )
+        # self.declare_parameter(
+        #     "clip_model_id",
+        #     "openai/clip-vit-base-patch32",
+        #     ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
+        # )
         self.declare_parameter(
             "text_prompt",
             "a person. a backpack. a chair. a table. a door.",
@@ -82,23 +87,40 @@ class Vision(Node):
             ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE),
         )
         
+        # self.declare_parameter(
+        #     "clip_labels",
+        #     [
+        #         "a person",
+        #         "a backpack",
+        #         "a chair",
+        #         "a table",
+        #         "a door",
+        #         "a couch",
+        #         "a laptop",
+        #         "a bottle",
+        #     ],
+        #     ParameterDescriptor(type=ParameterType.PARAMETER_STRING_ARRAY),
+        # )
+        # self.declare_parameter(
+        #     "clip_top_k",
+        #     1,
+        #     ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER),
+        # )
+
+        # API Parameters
         self.declare_parameter(
-            "clip_labels",
-            [
-                "a person",
-                "a backpack",
-                "a chair",
-                "a table",
-                "a door",
-                "a couch",
-                "a laptop",
-                "a bottle",
-            ],
-            ParameterDescriptor(type=ParameterType.PARAMETER_STRING_ARRAY),
+            "server_infer_url",
+            "http://127.0.0.1:8000/infer",  # works with SSH port-forward
+            ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
         )
         self.declare_parameter(
-            "clip_top_k",
-            1,
+            "request_timeout_sec",
+            60.0,
+            ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE),
+        )
+        self.declare_parameter(
+            "jpeg_quality",
+            80,
             ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER),
         )
 
@@ -109,6 +131,12 @@ class Vision(Node):
 
         self.inference_hz = float(self.get_parameter("inference_hz").value)
         self.device = str(self.get_parameter("device").value)
+
+        # API Parameters
+        self.server_infer_url = str(self.get_parameter("server_infer_url").value)
+        self.request_timeout_sec = float(self.get_parameter("request_timeout_sec").value)
+        self.jpeg_quality = int(self.get_parameter("jpeg_quality").value)
+        
         #Subscribers # noqa: E26
         self.color_sub = Subscriber(
             self,
@@ -134,24 +162,25 @@ class Vision(Node):
         )
         self.ts.registerCallback(self.synced_callback)
 
-        self.pipeline_cfg: Dict[str, Any] = {
-            "device": self.device,
-            "grounding_dino_model_id": str(self.get_parameter("grounding_dino_model_id").value),
-            "clip_model_id": str(self.get_parameter("clip_model_id").value),
-            "text_prompt": str(self.get_parameter("text_prompt").value),
-            "box_threshold": float(self.get_parameter("box_threshold").value),
-            "text_threshold": float(self.get_parameter("text_threshold").value),
-            "clip_labels": list(self.get_parameter("clip_labels").value),
-            "clip_top_k": int(self.get_parameter("clip_top_k").value),
-        }
+        # self.pipeline_cfg: Dict[str, Any] = {
+        #     "device": self.device,
+        #     "grounding_dino_model_id": str(self.get_parameter("grounding_dino_model_id").value),
+        #     "clip_model_id": str(self.get_parameter("clip_model_id").value),
+        #     "text_prompt": str(self.get_parameter("text_prompt").value),
+        #     "box_threshold": float(self.get_parameter("box_threshold").value),
+        #     "text_threshold": float(self.get_parameter("text_threshold").value),
+        #     "clip_labels": list(self.get_parameter("clip_labels").value),
+        #     "clip_top_k": int(self.get_parameter("clip_top_k").value),
+        # }
+        
 
         #Timer callback # noqa: E26
         self.bridge = CvBridge()
         period = 1.0 / max(self.inference_hz, 0.1)
         self.timer = self.create_timer(period, self.timer_callback)
-        self.pipeline = vl_models.VisionPipeline(**self.pipeline_cfg)
-        self.get_logger().info("Pipeline initialized.")
-
+        # self.pipeline = vl_models.VisionPipeline(**self.pipeline_cfg)
+        # self.get_logger().info("Pipeline initialized.")
+        self._last_infer_t = 0.0
         self.image_pub = self.create_publisher(
             Image,
             self.image_topic + '_axes',
@@ -179,6 +208,7 @@ class Vision(Node):
             self.image_topic + "_overlay",
             10
         )
+        self._session = requests.Session()
 
     def timer_callback(self):
         """Activates camera."""
@@ -202,40 +232,62 @@ class Vision(Node):
             self.get_logger().error(f"cv_bridge conversion failed: {e}")
             return
 
-        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        # rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
-        detections, overlay_rgb = self.pipeline.infer(
-            rgb=rgb, depth=depth, intrinsics=self.intrinsics
-        )
+        # detections, overlay_rgb = self.pipeline.infer(
+        #     rgb=rgb, depth=depth, intrinsics=self.intrinsics
+        # )
+
+        try:
+            overlay_bgr, det_payload = self._remote_infer(bgr=bgr, depth=depth)
+        except requests.RequestException as e:
+            self.get_logger().error(f"Remote request failed: {e}")
+            return
+        except Exception as e:
+            self.get_logger().error(f"Remote infer failed: {e}")
+            return
 
         # Publish overlay
         try:
-            overlay_bgr = cv2.cvtColor(overlay_rgb, cv2.COLOR_RGB2BGR)
+            # overlay_bgr = cv2.cvtColor(overlay_rgb, cv2.COLOR_RGB2BGR)
             overlay_msg = self.bridge.cv2_to_imgmsg(overlay_bgr, encoding="bgr8")
             overlay_msg.header = self.color_msg.header
             self.overlay_pub.publish(overlay_msg)
         except Exception as e:
             self.get_logger().warn(f"Failed to publish overlay: {e}")
 
+
+        # OLD CODE: Previous ITeration payload
         # Publish detections JSON
+        # payload = {
+        #     "stamp": {
+        #         "sec": int(self.color_msg.header.stamp.sec),
+        #         "nanosec": int(self.color_msg.header.stamp.nanosec),
+        #     },
+        #     "frame_id": self.color_msg.header.frame_id,
+        #     "text_prompt": self.pipeline.text_prompt,
+        #     "detections": [
+        #         {
+        #             "dino_label": d.label,
+        #             "dino_score": float(d.score),
+        #             "box_xyxy": [float(x) for x in d.box],
+        #             "clip_label": d.clip_label,
+        #             "clip_score": float(d.clip_score) if d.clip_score is not None else None,
+        #             "xyz_m": [float(x) for x in d.xyz_m] if d.xyz_m is not None else None,
+        #         }
+        #         for d in detections
+        #     ],
+        # }
+        # msg = String()
+        # msg.data = json.dumps(payload)
+        # self.dets_pub.publish(msg)
         payload = {
             "stamp": {
                 "sec": int(self.color_msg.header.stamp.sec),
                 "nanosec": int(self.color_msg.header.stamp.nanosec),
             },
             "frame_id": self.color_msg.header.frame_id,
-            "text_prompt": self.pipeline.text_prompt,
-            "detections": [
-                {
-                    "dino_label": d.label,
-                    "dino_score": float(d.score),
-                    "box_xyxy": [float(x) for x in d.box],
-                    "clip_label": d.clip_label,
-                    "clip_score": float(d.clip_score) if d.clip_score is not None else None,
-                    "xyz_m": [float(x) for x in d.xyz_m] if d.xyz_m is not None else None,
-                }
-                for d in detections
-            ],
+            **det_payload,
         }
         msg = String()
         msg.data = json.dumps(payload)
@@ -264,7 +316,75 @@ class Vision(Node):
 
         if not self.got_intrinsics:
             self.intrinsics = (fx, fy, cx, cy)
-            self.got_intrinsics = True    
+            self.got_intrinsics = True
+    
+    def _encode_color_jpg(self, bgr: np.ndarray) -> bytes:
+        q = int(max(1, min(100, self.jpeg_quality)))
+        ok, jpg = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), q])
+        if not ok:
+            raise RuntimeError("Failed to encode color JPEG.")
+        return jpg.tobytes()
+
+    def _encode_depth_png(self, depth: np.ndarray) -> bytes:
+        d = depth
+        if d.ndim == 3:
+            d = d[:, :, 0]
+
+        # Prefer uint16 in mm (RealSense often provides that already)
+        if d.dtype in (np.float32, np.float64):
+            d = np.clip(d * 1000.0, 0, 65535).astype(np.uint16)
+        elif d.dtype != np.uint16:
+            d = np.clip(d, 0, 65535).astype(np.uint16)
+
+        ok, png = cv2.imencode(".png", d)
+        if not ok:
+            raise RuntimeError("Failed to encode depth PNG.")
+        return png.tobytes()
+
+    def _remote_infer(self, bgr: np.ndarray, depth: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
+        assert self.intrinsics is not None
+        fx, fy, cx, cy = self.intrinsics
+
+        color_jpg = self._encode_color_jpg(bgr)
+        depth_png = self._encode_depth_png(depth)
+
+        text_prompt = str(self.get_parameter("text_prompt").value)
+        box_threshold = float(self.get_parameter("box_threshold").value)
+        text_threshold = float(self.get_parameter("text_threshold").value)
+
+        files = {
+            "color": ("color.jpg", color_jpg, "image/jpeg"),
+            "depth": ("depth.png", depth_png, "image/png"),
+        }
+        data = {
+            "fx": str(fx),
+            "fy": str(fy),
+            "cx": str(cx),
+            "cy": str(cy),
+            "text_prompt": text_prompt,
+            "box_threshold": str(box_threshold),
+            "text_threshold": str(text_threshold),
+            "jpeg_quality": str(int(max(1, min(100, self.jpeg_quality)))),
+        }
+
+        resp = self._session.post(
+            self.server_infer_url,
+            files=files,
+            data=data,
+            timeout=self.request_timeout_sec,
+        )
+        resp.raise_for_status()
+
+        z = zipfile.ZipFile(io.BytesIO(resp.content))
+        overlay_jpg = z.read("overlay.jpg")
+        det_payload = json.loads(z.read("detections.json").decode("utf-8"))
+
+        arr = np.frombuffer(overlay_jpg, dtype=np.uint8)
+        overlay_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if overlay_bgr is None:
+            raise RuntimeError("Failed to decode overlay JPEG.")
+
+        return overlay_bgr, det_payload
 
 
 def main(args=None):
