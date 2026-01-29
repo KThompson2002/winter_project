@@ -284,7 +284,7 @@ class VisionPipeline:
         gdino_classes = spec.target_synonyms
 
         # GroundingDINO expects list[list[str]]
-        text_labels = [self.gdino_classes]
+        text_labels = [gdino_classes]
 
         inputs = self.gdino_processor(images=rgb, text=text_labels, return_tensors="pt").to(self._device)
         with torch.no_grad():
@@ -326,8 +326,8 @@ class VisionPipeline:
                 xyz_m=xyz,
             )
 
-            clip_label, clip_score = self._clip_label_region(rgb, (x1i, y1i, x2i, y2i))
-            xyz = self._estimate_xyz_from_box(depth, (x1i, y1i, x2i, y2i), intrinsics)
+            # clip_label, clip_score = self._clip_label_region(rgb, (x1i, y1i, x2i, y2i))
+            # xyz = self._estimate_xyz_from_box(depth, (x1i, y1i, x2i, y2i), intrinsics)
             det._attr_margin = float(scores_dict["margin"])  # python allows ad-hoc attrs
             detections.append(det)
 
@@ -345,11 +345,12 @@ class VisionPipeline:
             # self._draw_detection(overlay, det)
         if spec.colors:
             # If attribute exists, margin is the most useful ranking signal
-            detections.sort(key=lambda d: getattr(d, "_attr_margin", -1e9), reverse=True)
+            detections.sort(key=lambda d: (d.attr_margin if d.attr_margin is not None else -1e9), reverse=True)
         else:
             # If no attributes, sort by pos probability (or keep DINO score order)
             detections.sort(key=lambda d: (d.clip_score if d.clip_score is not None else -1e9), reverse=True)
-    
+
+        
         return detections, overlay
 
     def _clip_label_region(
@@ -499,10 +500,14 @@ class VisionPipeline:
             txt_feat = txt_feat / txt_feat.norm(dim=-1, keepdim=True)
 
         # Similarities -> probabilities
-        with torch.no_grad():
-            sims = (img_feat @ txt_feat.T).squeeze(0)   # [num_phrases]
-            probs = torch.softmax(sims, dim=-1)
+        # with torch.no_grad():
+        #     sims = (img_feat @ txt_feat.T).squeeze(0)   # [num_phrases]
+        #     probs = torch.softmax(sims, dim=-1)
 
-        pos_prob = float(probs[0].item())
-        neg_max = float(probs[1:].max().item()) if len(phrases) > 1 else 0.0
-        return {"pos": pos_prob, "neg_max": neg_max, "margin": pos_prob - neg_max}
+        # pos_prob = float(probs[0].item())
+        # neg_max = float(probs[1:].max().item()) if len(phrases) > 1 else 0.0
+        # return {"pos": pos_prob, "neg_max": neg_max, "margin": pos_prob - neg_max}
+        sims = (img_feat @ txt_feat.T).squeeze(0)  # cosine sims
+        pos_sim = float(sims[0].item())
+        neg_max = float(sims[1:].max().item()) if sims.numel() > 1 else -1e9
+        return {"pos": pos_sim, "neg_max": neg_max, "margin": pos_sim - neg_max}

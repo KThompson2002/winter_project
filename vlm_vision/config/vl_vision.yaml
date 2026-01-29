@@ -1,7 +1,7 @@
 /vl_vision:
   ros__parameters:
     # device: cpu
-    inference_hz: 1.0
+    inference_hz: 3.0
     image_topic: /camera/image_raw
     color_image_topic: /camera/camera/color/image_raw
     depth_image_topic: /camera/camera/aligned_depth_to_color/image_raw
