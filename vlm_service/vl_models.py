@@ -194,10 +194,10 @@ class VisionPipeline:
             return None, None
 
         inputs = self.clip_processor(images=crop, return_tensors="pt").to(self._device)
-        with torch.no_grad():
+        with self.torch.no_grad():
             img_feat = self.clip_model.get_image_features(**inputs)
 
-            if not torch.is_tensor(img_feat):
+            if not self.torch.is_tensor(img_feat):
                 if hasattr(img_feat, "pooler_output"):
                     img_feat = img_feat.pooler_output
                 elif hasattr(img_feat, "last_hidden_state"):
@@ -209,8 +209,8 @@ class VisionPipeline:
             img_feat = img_feat / img_feat.norm(dim=-1, keepdim=True)
 
             sims = (img_feat @ self.clip_text_features.T).squeeze(0)
-            probs = torch.softmax(sims, dim=-1)
-            best = int(torch.argmax(probs).item())
+            probs = self.torch.softmax(sims, dim=-1)
+            best = int(self.torch.argmax(probs).item())
 
         return self.clip_labels[best], float(probs[best].item())
 

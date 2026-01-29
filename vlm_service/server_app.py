@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import Response
-from . import vl_models
+import vl_models
 
 
 # If this app.py lives in .../winter_project/gsam2_service/app.py
