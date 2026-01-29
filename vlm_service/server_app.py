@@ -130,7 +130,27 @@ async def infer(
         _PIPELINE.text_threshold = float(text_threshold)
 
         detections, overlay_rgb = _PIPELINE.infer(rgb=rgb, depth=depth_img, intrinsics=intrinsics)
+    if detections:
+        goal = detections[0]  # already reranked in vl_models
+        x1, y1, x2, y2 = [int(v) for v in goal.box]
 
+        # Thick blue box for goal
+        cv2.rectangle(overlay_rgb, (x1, y1), (x2, y2), (255, 0, 0), 4)
+
+        label = goal.clip_label or goal.label
+        score = goal.attr_margin if goal.attr_margin is not None else goal.clip_score
+        txt = f"GOAL: {label} ({score:.2f})"
+
+        cv2.putText(
+            overlay_rgb,
+            txt,
+            (x1, max(0, y1 - 10)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (255, 0, 0),
+            2,
+            cv2.LINE_AA,
+        )
     # Encode overlay to jpeg
     overlay_bgr = cv2.cvtColor(overlay_rgb, cv2.COLOR_RGB2BGR)
     ok, overlay_jpg = cv2.imencode(".jpg", overlay_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality])
