@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
-
+from PIL import Image
 import cv2
 import numpy as np
 
@@ -93,6 +93,21 @@ def build_phrases(spec: SearchSpec) -> Tuple[str, List[str]]:
                 negs.append(f"a {c} {spec.target}")
 
     return pos, negs
+
+@staticmethod
+def _draw_mask_overlay(img_rgb: np.ndarray, mask: np.ndarray) -> None:
+    """
+    img_rgb: HxWx3 uint8
+    mask: HxW uint8/bool
+    """
+    m = mask.astype(bool)
+    if not np.any(m):
+        return
+
+    # Simple translucent green fill (no extra deps)
+    # (avoid float-ing the whole image; only operate on masked pixels)
+    img_rgb[m] = (0.65 * img_rgb[m] + 0.35 * np.array([0, 255, 0], dtype=np.uint8)).astype(np.uint8)
+
 
 # Model Classes:
 @dataclass
@@ -204,6 +219,7 @@ class VisionPipeline:
         import torch
         from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
         from transformers import CLIPModel, CLIPProcessor
+        from transformers import Sam3TrackerModel, Sam3TrackerProcessor
 
         self.torch = torch
 
@@ -222,6 +238,11 @@ class VisionPipeline:
         self.clip_processor = CLIPProcessor.from_pretrained(self.clip_model_id)
         self.clip_model = CLIPModel.from_pretrained(self.clip_model_id)
         self.clip_model.to(self._device).eval()
+
+        # SAM3
+        self.sam3_processor = Sam3TrackerProcessor.from_pretrained("facebook/sam3")
+        self.sam3_model = Sam3TrackerModel.from_pretrained("facebook/sam3").to(self._device)
+        self.sam3_model.eval()
 
         # Precompute CLIP text embeddings (normalized)
         with torch.no_grad():
@@ -350,7 +371,16 @@ class VisionPipeline:
             # If no attributes, sort by pos probability (or keep DINO score order)
             detections.sort(key=lambda d: (d.clip_score if d.clip_score is not None else -1e9), reverse=True)
 
-        
+        # --- SAM3 segmentation on top-3 after goal selection ---
+        K = min(3, len(detections))
+        top = detections[:K]
+        top_boxes = [d.box for d in top]  # xyxy in pixel coords
+
+        masks = self._sam3_segment_boxes(rgb, top_boxes)
+        for det, mask in zip(top, masks):
+            self._draw_mask_overlay(overlay, mask)
+        # ------------------------------------------------------
+
         return detections, overlay
 
     def _clip_label_region(
@@ -510,4 +540,49 @@ class VisionPipeline:
         sims = (img_feat @ txt_feat.T).squeeze(0)  # cosine sims
         pos_sim = float(sims[0].item())
         neg_max = float(sims[1:].max().item()) if sims.numel() > 1 else -1e9
-        return {"pos": pos_sim, "neg_max": neg_max, "margin": pos_sim - neg_max}
+        return {"pos": pos_sim, "neg_max": neg_max, "margin": pos_sim - neg_max}\
+        
+    def _sam3_segment_boxes(
+        self,
+        rgb: np.ndarray,
+        boxes_xyxy: List[Tuple[float, float, float, float]],
+    ) -> np.ndarray:
+        """
+        Segment each box using SAM3.
+        Args:
+        rgb: HxWx3 uint8
+        boxes_xyxy: list of (x1,y1,x2,y2) in pixel coords
+
+        Returns:
+        masks: uint8 array of shape (K, H, W) with values {0,1}
+        """
+        if len(boxes_xyxy) == 0:
+            return np.zeros((0, rgb.shape[0], rgb.shape[1]), dtype=np.uint8)
+
+        torch = self.torch
+        img_pil = Image.fromarray(rgb)
+
+        # HF SAM3Tracker expects input_boxes as [batch][num_boxes][4]
+        input_boxes = [[list(map(float, b)) for b in boxes_xyxy]]
+
+        inputs = self.sam3_processor(
+            images=img_pil,
+            input_boxes=input_boxes,
+            return_tensors="pt",
+        ).to(self._device)
+
+        with torch.no_grad():
+            outputs = self.sam3_model(**inputs, multimask_output=False)
+
+        # Post-process masks back to original size
+        # Returns list per image; take [0] for batch 0
+        masks = self.sam3_processor.post_process_masks(
+            outputs.pred_masks.cpu(),
+            inputs["original_sizes"],
+        )[0]
+
+        # masks shape: (num_boxes, 1, H, W)
+        masks = masks[:, 0, :, :]  # (K, H, W)
+        masks = (masks > 0).to(torch.uint8).numpy()
+        return masks
+
