@@ -10,7 +10,7 @@
     # grounding_dino_model_id: "IDEA-Research/grounding-dino-tiny"
     box_threshold: 0.35
     text_threshold: 0.25
-    text_prompt: "a person. a door. a chair. a backpack. a table. a trash can."
+    text_prompt: "Go to the blue backpack"
     # CLIP
     # clip_model_id: "openai/clip-vit-base-patch32"
     # clip_top_k: 1
