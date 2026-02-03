@@ -99,6 +99,7 @@ async def infer(
     cx: float = Form(...),
     cy: float = Form(...),
     # Optional overrides per request
+    # pipeline: str = Form(""),
     text_prompt: str = Form(""),
     box_threshold: float = Form(0.35),
     text_threshold: float = Form(0.25),

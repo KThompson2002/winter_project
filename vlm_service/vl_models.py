@@ -1,3 +1,4 @@
+from enum import auto, Enum
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,15 +12,29 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple, Dict
 
 # Store relevant words
-COLOR_WORDS = [
-    "red", "blue", "green", "yellow", "orange", "purple", "pink",
-    "black", "white", "gray", "grey", "brown",
-]
+# COLOR_WORDS = [
+#     "red", "blue", "green", "yellow", "orange", "purple", "pink",
+#     "black", "white", "gray", "grey", "brown",
+# ]
+
+class Pipeline(Enum):
+    """
+    Current state of the system.
+    """
+
+    SAM_CLIP = auto()
+    DINO_CLIP_SAM = auto()
+    DINO_SAM_CLIP = auto()
+    CAUGHT = auto()
 
 STOPWORDS = {
-    "go", "to", "the", "a", "an", "please", "find", "look", "for", "navigate",
-    "toward", "towards", "move", "walk", "drive", "robot", "and", "then",
-    "can", "you", "me", "this", "that", "it", "with", "on", "in", "at",
+    "go", "goto", "move", "walk", "head", "navigate", "drive",
+    "to", "toward", "towards", "into", "onto", "for", "at", "in", "on",
+    "the", "a", "an", "please", "now", "then", "and", "with",
+    "find", "look", "search", "see", "get",
+    "me", "my", "your", "our",
+    "this", "that", "these", "those",
+    "there", "here",
 }
 
 OBJECT_SYNONYMS = {
@@ -33,12 +48,24 @@ OBJECT_SYNONYMS = {
     "couch": ["couch", "sofa"],
 }
 
+GENERIC_NEGATIVES = [
+    "background",
+    "floor",
+    "wall",
+    "ceiling",
+    "table surface",
+    "empty space",
+    "shadow",
+    "reflection",
+    "a photo of something else",
+]
+
 # Query Parsing Classes and Functions
 @dataclass
 class SearchSpec:
     target: str                   # canonical object name, e.g. "backpack"
-    target_synonyms: List[str]    # for DINO prompt
-    colors: List[str]             # attributes
+    # target_synonyms: List[str]    # for DINO prompt
+    # colors: List[str]             # attributes
     raw: str                      # original query
 
 def _normalize(text: str) -> str:
@@ -47,52 +74,35 @@ def _normalize(text: str) -> str:
     text = re.sub(r"\s+", " ", text)
     return text
 
-def parse_query(query: str) -> SearchSpec:
-    q = _normalize(query)
-    tokens = [t for t in q.split() if t and t not in STOPWORDS]
 
-    # colors
-    colors = [t for t in tokens if t in COLOR_WORDS]
+def extract_goal_phrase(command: str, *, drop_spatial: bool = True) -> str:
+    s = _normalize(command)
+    tokens = s.split()
 
-    # pick target by matching any synonym in the token string
-    joined = " " + " ".join(tokens) + " "
-    best_target = None
-    best_hit_len = 0
-    for canonical, syns in OBJECT_SYNONYMS.items():
-        for s in syns:
-            if f" {s} " in joined:
-                if len(s) > best_hit_len:
-                    best_target = canonical
-                    best_hit_len = len(s)
+    kept: List[str] = [t for t in tokens if t not in STOPWORDS]
 
-    if best_target is None:
-        # fallback: treat last non-color token as a target guess
-        non_attr = [t for t in tokens if t not in COLOR_WORDS]
-        best_target = non_attr[-1] if non_attr else "object"
-        syns = [best_target]
-    else:
-        syns = OBJECT_SYNONYMS[best_target]
+    # optionally drop spatial words
+    # if drop_spatial:
+    #     kept = [t for t in kept if t not in SPATIAL_WORDS]
 
-    return SearchSpec(target=best_target, target_synonyms=syns, colors=colors, raw=query)
+    kept = [t[:-1] if (len(t) > 3 and t.endswith("s")) else t for t in kept]
 
-def build_phrases(spec: SearchSpec) -> Tuple[str, List[str]]:
-    # Positive phrase used for CLIP scoring
-    if spec.colors:
-        # handle multiple colors: “blue and black backpack”
-        color_part = " and ".join(spec.colors)
-        pos = f"a {color_part} {spec.target}"
-    else:
-        pos = f"a {spec.target}"
+    goal = " ".join(kept).strip()
+    return goal
 
-    # Negatives: same target with other colors (only if color was specified)
-    negs: List[str] = []
-    if spec.colors:
-        # use “all other colors” as negatives
-        for c in COLOR_WORDS:
-            if c not in spec.colors:
-                negs.append(f"a {c} {spec.target}")
+# def build_positive_phrases(goal_phrase: str) -> List[str]:
+#     goal_phrase = goal_phrase.strip()
+#     templates = [
+#         "{g}",
+#         "a photo of {g}",
+#         "the {g}",
+#         "a close-up of {g}",
+#         "a picture of {g}",
+#         "an image of {g}",
+#     ]
+#     return [t.format(g=goal_phrase) for t in templates]
 
-    return pos, negs
+
 
 
 # Model Classes:
@@ -192,6 +202,7 @@ class VisionPipeline:
 
         self.gdino_classes: List[str] = []
         self.set_text_prompt(self.text_prompt)
+        self.state = Pipeline.DINO_CLIP_SAM
 
         self._init_models()
 
@@ -268,7 +279,7 @@ class VisionPipeline:
         *,
         rgb: np.ndarray,
         depth: np.ndarray,
-        intrinsics: Tuple[float, float, float, float],
+        intrinsics: Tuple[float, float, float, float]
     ) -> Tuple[List[Detection], np.ndarray]:
         """
         Run GroundingDINO+CLIP on an RGB-D frame.
@@ -282,92 +293,89 @@ class VisionPipeline:
             detections: list of Detection
             overlay_rgb: RGB image with boxes/labels
         """
-        torch = self.torch
-        h, w = rgb.shape[:2]
-        overlay = rgb.copy()
+        if self.state == Pipeline.DINO_CLIP_SAM:
+            torch = self.torch
+            h, w = rgb.shape[:2]
+            overlay = rgb.copy()
 
-        spec = parse_query(self.text_prompt)             
-        pos_phrase, neg_phrases = build_phrases(spec)
-        gdino_classes = spec.target_synonyms
+            goal = extract_goal_phrase(self.text_prompt)
+            neg_phrases = GENERIC_NEGATIVES             
+            # pos_phrase, neg_phrases = build_phrases(spec)
+            # gdino_classes = spec.target_synonyms
 
-        # GroundingDINO expects list[list[str]]
-        text_labels = [gdino_classes]
+            # GroundingDINO expects list[list[str]]
+            text_labels = [[goal]]
 
-        inputs = self.gdino_processor(images=rgb, text=text_labels, return_tensors="pt").to(self._device)
-        with torch.no_grad():
-            outputs = self.gdino_model(**inputs)
+            inputs = self.gdino_processor(images=rgb, text=text_labels, return_tensors="pt").to(self._device)
+            with torch.no_grad():
+                outputs = self.gdino_model(**inputs)
 
-        results = self.gdino_processor.post_process_grounded_object_detection(
-            outputs,
-            inputs.input_ids,
-            threshold=self.box_threshold,
-            text_threshold=self.text_threshold,
-            target_sizes=[(h, w)],
-        )
-
-        if not results or len(results[0].get("boxes", [])) == 0:
-            return [], overlay
-
-        res0 = results[0]
-        boxes_xyxy = res0["boxes"].detach().cpu().numpy()
-        scores = res0["scores"].detach().cpu().numpy()
-        labels = res0["labels"]
-
-        detections: List[Detection] = []
-        for i in range(len(boxes_xyxy)):
-            x1, y1, x2, y2 = boxes_xyxy[i].tolist()
-            x1i, y1i, x2i, y2i = self._pad_and_clip_box(x1, y1, x2, y2, w, h, 4)
-            crop = rgb[y1i:y2i, x1i:x2i]
-            scores_dict = self.clip_score_phrases(crop, pos_phrase, neg_phrases)
-            xyz = self._estimate_xyz_from_box(depth, (x1i, y1i, x2i, y2i), intrinsics)
-
-            det = Detection(
-                label=str(labels[i]),
-                score=float(scores[i]),
-                box=(float(x1i), float(y1i), float(x2i), float(y2i)),
-                # store the *goal phrase* and the pos score
-                clip_label=pos_phrase,
-                clip_score=float(scores_dict["pos"]),
-                attr_neg_max=float(scores_dict["neg_max"]),
-                attr_margin=float(scores_dict["margin"]),
-                xyz_m=xyz,
+            results = self.gdino_processor.post_process_grounded_object_detection(
+                outputs,
+                inputs.input_ids,
+                threshold=self.box_threshold,
+                text_threshold=self.text_threshold,
+                target_sizes=[(h, w)],
             )
 
-            # clip_label, clip_score = self._clip_label_region(rgb, (x1i, y1i, x2i, y2i))
-            # xyz = self._estimate_xyz_from_box(depth, (x1i, y1i, x2i, y2i), intrinsics)
-            det._attr_margin = float(scores_dict["margin"])  # python allows ad-hoc attrs
-            detections.append(det)
+            if not results or len(results[0].get("boxes", [])) == 0:
+                return [], overlay
 
-            # For drawing, you might want to show margin if attributes exist
-            self._draw_detection(overlay, det)
-            # det = Detection(
-            #     label=str(labels[i]),
-            #     score=float(scores[i]),
-            #     box=(float(x1i), float(y1i), float(x2i), float(y2i)),
-            #     clip_label=clip_label,
-            #     clip_score=clip_score,
-            #     xyz_m=xyz,
-            # )
-            # detections.append(det)
-            # self._draw_detection(overlay, det)
-        if spec.colors:
-            # If attribute exists, margin is the most useful ranking signal
-            detections.sort(key=lambda d: (d.attr_margin if d.attr_margin is not None else -1e9), reverse=True)
-        else:
+            res0 = results[0]
+            boxes_xyxy = res0["boxes"].detach().cpu().numpy()
+            scores = res0["scores"].detach().cpu().numpy()
+            labels = res0["labels"]
+
+            detections: List[Detection] = []
+            for i in range(len(boxes_xyxy)):
+                x1, y1, x2, y2 = boxes_xyxy[i].tolist()
+                x1i, y1i, x2i, y2i = self._pad_and_clip_box(x1, y1, x2, y2, w, h, 4)
+                crop = rgb[y1i:y2i, x1i:x2i]
+                scores_dict = self.clip_score_phrases(crop, goal, neg_phrases)
+                xyz = self._estimate_xyz_from_box(depth, (x1i, y1i, x2i, y2i), intrinsics)
+
+                det = Detection(
+                    label=str(labels[i]),
+                    score=float(scores[i]),
+                    box=(float(x1i), float(y1i), float(x2i), float(y2i)),
+                    # store the *goal phrase* and the pos score
+                    clip_label=goal,
+                    clip_score=float(scores_dict["pos"]),
+                    attr_neg_max=float(scores_dict["neg_max"]),
+                    attr_margin=float(scores_dict["margin"]),
+                    xyz_m=xyz,
+                )
+
+                # clip_label, clip_score = self._clip_label_region(rgb, (x1i, y1i, x2i, y2i))
+                # xyz = self._estimate_xyz_from_box(depth, (x1i, y1i, x2i, y2i), intrinsics)
+                det._attr_margin = float(scores_dict["margin"])  # python allows ad-hoc attrs
+                detections.append(det)
+
+                self._draw_detection(overlay, det)
+                # det = Detection(
+                #     label=str(labels[i]),
+                #     score=float(scores[i]),
+                #     box=(float(x1i), float(y1i), float(x2i), float(y2i)),
+                #     clip_label=clip_label,
+                #     clip_score=clip_score,
+                #     xyz_m=xyz,
+                # )
+                # detections.append(det)
+                # self._draw_detection(overlay, det)
             # If no attributes, sort by pos probability (or keep DINO score order)
             detections.sort(key=lambda d: (d.clip_score if d.clip_score is not None else -1e9), reverse=True)
 
-        # --- SAM3 segmentation on top-3 after goal selection ---
-        K = min(3, len(detections))
-        top = detections[:K]
-        top_boxes = [d.box for d in top]  # xyxy in pixel coords
+            # --- SAM3 segmentation on top-3 after goal selection ---
+            K = min(3, len(detections))
+            top = detections[:K]
+            top_boxes = [d.box for d in top]  # xyxy in pixel coords
 
-        masks = self._sam3_segment_boxes(rgb, top_boxes)
-        for det, mask in zip(top, masks):
-            self._draw_mask_overlay(overlay, mask)
-        # ------------------------------------------------------
+            masks = self._sam3_segment_boxes(rgb, top_boxes)
+            for det, mask in zip(top, masks):
+                self._draw_mask_overlay(overlay, mask)
+            # ------------------------------------------------------
 
-        return detections, overlay
+            return detections, overlay
 
     def _clip_label_region(
         self,
@@ -499,7 +507,6 @@ class VisionPipeline:
             img_feat = img_feat.float()
             img_feat = img_feat / img_feat.norm(dim=-1, keepdim=True)
 
-        # Encode text (pos + negs) on the fly
         phrases = [pos] + negs
         txt_inputs = self.clip_processor(text=phrases, return_tensors="pt", padding=True).to(self._device)
         with torch.no_grad():
@@ -514,15 +521,6 @@ class VisionPipeline:
 
             txt_feat = txt_feat.float()
             txt_feat = txt_feat / txt_feat.norm(dim=-1, keepdim=True)
-
-        # Similarities -> probabilities
-        # with torch.no_grad():
-        #     sims = (img_feat @ txt_feat.T).squeeze(0)   # [num_phrases]
-        #     probs = torch.softmax(sims, dim=-1)
-
-        # pos_prob = float(probs[0].item())
-        # neg_max = float(probs[1:].max().item()) if len(phrases) > 1 else 0.0
-        # return {"pos": pos_prob, "neg_max": neg_max, "margin": pos_prob - neg_max}
         sims = (img_feat @ txt_feat.T).squeeze(0)  # cosine sims
         pos_sim = float(sims[0].item())
         neg_max = float(sims[1:].max().item()) if sims.numel() > 1 else -1e9

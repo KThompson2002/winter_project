@@ -31,6 +31,11 @@ class Vision(Node):
         self.get_logger().info('vision init')
         qos_profile = QoSProfile(depth=10)
 
+        # self.declare_parameter(
+        #     'pipeline',
+        #     'dino_sam_clip',
+        #     ParameterDescriptor(type=ParameterType.PARAMETER_STRING)
+        # )
         self.declare_parameter(
             'image_topic',
             '/camera/image_raw',
@@ -51,26 +56,11 @@ class Vision(Node):
             '/camera/camera/color/camera_info',
             ParameterDescriptor(type=ParameterType.PARAMETER_STRING)
         )
-        # self.declare_parameter(
-        #     "device",
-        #     "cpu",
-        #     ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
-        # )
         self.declare_parameter(
             "inference_hz",
             1.0,
             ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE),
         )
-        # self.declare_parameter(
-        #     "grounding_dino_model_id",
-        #     "IDEA-Research/grounding-dino-tiny",
-        #     ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
-        # )
-        # self.declare_parameter(
-        #     "clip_model_id",
-        #     "openai/clip-vit-base-patch32",
-        #     ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
-        # )
         self.declare_parameter(
             "text_prompt",
             "a person. a backpack. a chair. a table. a door.",
@@ -87,26 +77,6 @@ class Vision(Node):
             ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE),
         )
         
-        # self.declare_parameter(
-        #     "clip_labels",
-        #     [
-        #         "a person",
-        #         "a backpack",
-        #         "a chair",
-        #         "a table",
-        #         "a door",
-        #         "a couch",
-        #         "a laptop",
-        #         "a bottle",
-        #     ],
-        #     ParameterDescriptor(type=ParameterType.PARAMETER_STRING_ARRAY),
-        # )
-        # self.declare_parameter(
-        #     "clip_top_k",
-        #     1,
-        #     ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER),
-        # )
-
         # API Parameters
         self.declare_parameter(
             "server_infer_url",
@@ -124,6 +94,7 @@ class Vision(Node):
             ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER),
         )
 
+        # self.pipeline = self.get_parameter('pipeline').value
         self.image_topic = self.get_parameter('image_topic').value
         self.color_image_topic = self.get_parameter('color_image_topic').value
         self.depth_image_topic = self.get_parameter('depth_image_topic').value
@@ -162,18 +133,6 @@ class Vision(Node):
         )
         self.ts.registerCallback(self.synced_callback)
 
-        # self.pipeline_cfg: Dict[str, Any] = {
-        #     "device": self.device,
-        #     "grounding_dino_model_id": str(self.get_parameter("grounding_dino_model_id").value),
-        #     "clip_model_id": str(self.get_parameter("clip_model_id").value),
-        #     "text_prompt": str(self.get_parameter("text_prompt").value),
-        #     "box_threshold": float(self.get_parameter("box_threshold").value),
-        #     "text_threshold": float(self.get_parameter("text_threshold").value),
-        #     "clip_labels": list(self.get_parameter("clip_labels").value),
-        #     "clip_top_k": int(self.get_parameter("clip_top_k").value),
-        # }
-        
-
         #Timer callback # noqa: E26
         self.bridge = CvBridge()
         period = 1.0 / max(self.inference_hz, 0.1)
@@ -192,13 +151,6 @@ class Vision(Node):
         self.color_msg: Optional[Image] = None
         self.depth_msg: Optional[Image] = None
         self._last_infer_t = 0.0
-
-        #Attributes # noqa: E26
-        # self.intrinsics = None
-        # self.got_intrinsics = False
-        # self.color_img = None
-        # self.depth_img = None
-        # self.bridge = CvBridge()
 
         self.dets_pub = self.create_publisher(
             String, self.image_topic + "_detections", 10
@@ -220,7 +172,6 @@ class Vision(Node):
             return
 
         now = time.time()
-        # extra throttle (timers can jitter)
         if now - self._last_infer_t < (1.0 / max(self.inference_hz, 0.1)) * 0.5:
             return
         self._last_infer_t = now
@@ -231,12 +182,6 @@ class Vision(Node):
         except Exception as e:
             self.get_logger().error(f"cv_bridge conversion failed: {e}")
             return
-
-        # rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-
-        # detections, overlay_rgb = self.pipeline.infer(
-        #     rgb=rgb, depth=depth, intrinsics=self.intrinsics
-        # )
 
         try:
             overlay_bgr, det_payload = self._remote_infer(bgr=bgr, depth=depth)
@@ -257,30 +202,6 @@ class Vision(Node):
             self.get_logger().warn(f"Failed to publish overlay: {e}")
 
 
-        # OLD CODE: Previous ITeration payload
-        # Publish detections JSON
-        # payload = {
-        #     "stamp": {
-        #         "sec": int(self.color_msg.header.stamp.sec),
-        #         "nanosec": int(self.color_msg.header.stamp.nanosec),
-        #     },
-        #     "frame_id": self.color_msg.header.frame_id,
-        #     "text_prompt": self.pipeline.text_prompt,
-        #     "detections": [
-        #         {
-        #             "dino_label": d.label,
-        #             "dino_score": float(d.score),
-        #             "box_xyxy": [float(x) for x in d.box],
-        #             "clip_label": d.clip_label,
-        #             "clip_score": float(d.clip_score) if d.clip_score is not None else None,
-        #             "xyz_m": [float(x) for x in d.xyz_m] if d.xyz_m is not None else None,
-        #         }
-        #         for d in detections
-        #     ],
-        # }
-        # msg = String()
-        # msg.data = json.dumps(payload)
-        # self.dets_pub.publish(msg)
         payload = {
             "stamp": {
                 "sec": int(self.color_msg.header.stamp.sec),
@@ -292,15 +213,6 @@ class Vision(Node):
         msg = String()
         msg.data = json.dumps(payload)
         self.dets_pub.publish(msg)
-
-        # OLD CODE: Previous Iteration implementation
-        # color_img = self.bridge.imgmsg_to_cv2(
-        #     self.color_img,
-        #     desired_encoding='bgr8'
-        # )
-
-        # mask_msg = self.bridge.cv2_to_imgmsg(color_img)
-        # self.image_pub.publish(mask_msg)
 
     def synced_callback(self, color_msg, depth_msg):
         """Sync callback for color and depth."""
@@ -361,6 +273,7 @@ class Vision(Node):
             "fy": str(fy),
             "cx": str(cx),
             "cy": str(cy),
+            # "pipeline": self.pipeline,
             "text_prompt": text_prompt,
             "box_threshold": str(box_threshold),
             "text_threshold": str(text_threshold),
