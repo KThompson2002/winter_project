@@ -1,0 +1,3 @@
+[submodule "third_party/unitree_ros2"]
+	path = third_party/unitree_ros2
+	url = git@github.com:KThompson2002/unitree_ros2.git
