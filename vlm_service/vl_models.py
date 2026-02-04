@@ -422,16 +422,19 @@ class VisionPipeline:
             labels = res0["labels"]
 
             masks = self._sam3_segment_boxes(rgb, boxes_xyxy)
+            i = 0
+            detections: List[Detection] = []
             for mask in masks:
                 self._draw_mask_overlay(overlay, mask)
+                x1, y1, x2, y2 = mask_to_bbox(mask)
                 mask_crop = masked_crop_for_clip(rgb, mask)
-                scores_dict == self.clip_score_phrases(mask_crop, goal, neg_phrases)
-                xyz = self._estimate_xyz_from_box(depth, (x1i, y1i, x2i, y2i), intrinsics)
+                scores_dict = self.clip_score_phrases(mask_crop, goal, neg_phrases)
+                xyz = self._estimate_xyz_from_box(depth, (x1, y1, x2, y2), intrinsics)
 
                 det = Detection(
                     label=str(labels[i]),
                     score=float(scores[i]),
-                    box=(float(x1i), float(y1i), float(x2i), float(y2i)),
+                    box=(float(x1), float(y1), float(x2), float(y2)),
                     # store the *goal phrase* and the pos score
                     clip_label=goal,
                     clip_score=float(scores_dict["pos"]),
@@ -443,6 +446,7 @@ class VisionPipeline:
                 det._attr_margin = float(scores_dict["margin"])  # python allows ad-hoc attrs
                 detections.append(det)
                 self._draw_detection(overlay, det)
+                i = i + 1
             
             detections.sort(key=lambda d: (d.clip_score if d.clip_score is not None else -1e9), reverse=True)
 
