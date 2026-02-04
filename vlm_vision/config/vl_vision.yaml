@@ -10,22 +10,4 @@
     # grounding_dino_model_id: "IDEA-Research/grounding-dino-tiny"
     box_threshold: 0.35
     text_threshold: 0.25
-    text_prompt: "Go to the blue backpack"
-    # CLIP
-    # clip_model_id: "openai/clip-vit-base-patch32"
-    # clip_top_k: 1
-    # clip_labels:
-    #   - "a person"
-    #   - "a door"
-    #   - "an open door"
-    #   - "a closed door"
-    #   - "a chair"
-    #   - "a table"
-    #   - "a couch"
-    #   - "a backpack"
-    #   - "a laptop"
-    #   - "a bottle"
-    #   - "a trash can"
-    #   - "a suitcase"
-    #   - "a cabinet"
-    #   - "a stairway"
+    text_prompt: "Go to the blue backpack."

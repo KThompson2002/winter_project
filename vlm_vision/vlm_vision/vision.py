@@ -273,7 +273,6 @@ class Vision(Node):
             "fy": str(fy),
             "cx": str(cx),
             "cy": str(cy),
-            # "pipeline": self.pipeline,
             "text_prompt": text_prompt,
             "box_threshold": str(box_threshold),
             "text_threshold": str(text_threshold),
