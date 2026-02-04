@@ -11,12 +11,6 @@ import re
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Dict
 
-# Store relevant words
-# COLOR_WORDS = [
-#     "red", "blue", "green", "yellow", "orange", "purple", "pink",
-#     "black", "white", "gray", "grey", "brown",
-# ]
-
 class Pipeline(Enum):
     """
     Current state of the system.
