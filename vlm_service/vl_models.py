@@ -422,7 +422,7 @@ class VisionPipeline:
             labels = res0["labels"]
 
             masks = self._sam3_segment_boxes(rgb, boxes_xyxy)
-            for mask in zip,masks:
+            for mask in masks:
                 self._draw_mask_overlay(overlay, mask)
                 mask_crop = masked_crop_for_clip(rgb, mask)
                 scores_dict == self.clip_score_phrases(mask_crop, goal, neg_phrases)
