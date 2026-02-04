@@ -1,5 +1,5 @@
-from enum import auto, Enum
 from __future__ import annotations
+from enum import auto, Enum
 
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
