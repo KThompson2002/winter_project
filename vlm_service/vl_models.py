@@ -102,8 +102,43 @@ def extract_goal_phrase(command: str, *, drop_spatial: bool = True) -> str:
 #     ]
 #     return [t.format(g=goal_phrase) for t in templates]
 
+def mask_to_bbox(mask: np.ndarray, pad: int = 8):
+    """mask: HxW bool/0-1. Returns (x1,y1,x2,y2) inclusive-exclusive."""
+    ys, xs = np.where(mask > 0)
+    if len(xs) == 0:
+        return None
+    x1, x2 = xs.min(), xs.max() + 1
+    y1, y2 = ys.min(), ys.max() + 1
+    x1 = max(0, x1 - pad); y1 = max(0, y1 - pad)
+    x2 = min(mask.shape[1], x2 + pad); y2 = min(mask.shape[0], y2 + pad)
+    return int(x1), int(y1), int(x2), int(y2)
 
+def apply_mask_blur_bg(rgb: np.ndarray, mask: np.ndarray):
+    blur = cv2.GaussianBlur(rgb, (21, 21), 0)
+    out = rgb.copy()
+    m = mask.astype(bool)
+    out[~m] = blur[~m]
+    return out
 
+def masked_crop_for_clip(rgb: np.ndarray, mask: np.ndarray, pad: int = 8, bg: int = 128):
+    bbox = mask_to_bbox(mask, pad=pad)
+    if bbox is None:
+        return None
+
+    x1, y1, x2, y2 = bbox
+    rgb_crop = rgb[y1:y2, x1:x2]
+    mask_crop = mask[y1:y2, x1:x2].astype(bool)
+
+    # 🔹 Create blurred version of the crop
+    blurred_crop = cv2.GaussianBlur(rgb_crop, (21, 21), 0)
+
+    # 🔹 Start with blurred background
+    crop_masked = blurred_crop.copy()
+
+    # 🔹 Paste original object pixels back in
+    crop_masked[mask_crop] = rgb_crop[mask_crop]
+
+    return crop_masked
 
 # Model Classes:
 @dataclass
@@ -202,7 +237,7 @@ class VisionPipeline:
 
         self.gdino_classes: List[str] = []
         self.set_text_prompt(self.text_prompt)
-        self.state = Pipeline.DINO_CLIP_SAM
+        self.state = Pipeline.DINO_SAM_CLIP
 
         self._init_models()
 
@@ -346,22 +381,9 @@ class VisionPipeline:
                     xyz_m=xyz,
                 )
 
-                # clip_label, clip_score = self._clip_label_region(rgb, (x1i, y1i, x2i, y2i))
-                # xyz = self._estimate_xyz_from_box(depth, (x1i, y1i, x2i, y2i), intrinsics)
                 det._attr_margin = float(scores_dict["margin"])  # python allows ad-hoc attrs
                 detections.append(det)
-
                 self._draw_detection(overlay, det)
-                # det = Detection(
-                #     label=str(labels[i]),
-                #     score=float(scores[i]),
-                #     box=(float(x1i), float(y1i), float(x2i), float(y2i)),
-                #     clip_label=clip_label,
-                #     clip_score=clip_score,
-                #     xyz_m=xyz,
-                # )
-                # detections.append(det)
-                # self._draw_detection(overlay, det)
             # If no attributes, sort by pos probability (or keep DINO score order)
             detections.sort(key=lambda d: (d.clip_score if d.clip_score is not None else -1e9), reverse=True)
 
@@ -374,6 +396,61 @@ class VisionPipeline:
             for det, mask in zip(top, masks):
                 self._draw_mask_overlay(overlay, mask)
             # ------------------------------------------------------
+
+            return detections, overlay
+        elif self.state == Pipeline.DINO_SAM_CLIP:
+            torch = self.torch
+            h, w = rgb.shape[:2]
+            overlay = rgb.copy()
+
+            goal = extract_goal_phrase(self.text_prompt)
+            neg_phrases = GENERIC_NEGATIVES
+            text_labels = [[goal]]
+
+            inputs = self.gdino_processor(images=rgb, text=text_labels, return_tensors="pt").to(self._device)
+            with torch.no_grad():
+                outputs = self.gdino_model(**inputs)
+
+            results = self.gdino_processor.post_process_grounded_object_detection(
+                outputs,
+                inputs.input_ids,
+                threshold=self.box_threshold,
+                text_threshold=self.text_threshold,
+                target_sizes=[(h, w)],
+            )
+
+            if not results or len(results[0].get("boxes", [])) == 0:
+                return [], overlay
+
+            res0 = results[0]
+            boxes_xyxy = res0["boxes"].detach().cpu().numpy()
+            scores = res0["scores"].detach().cpu().numpy()
+            labels = res0["labels"]
+
+            masks = self._sam3_segment_boxes(rgb, boxes_xyxy)
+            for det, mask in zip(top, masks):
+                self._draw_mask_overlay(overlay, mask)
+                mask_crop = masked_crop_for_clip(rgb, mask)
+                scores_dict == self.clip_score_phrases(crop, goal, neg_phrases)
+                xyz = self._estimate_xyz_from_box(depth, (x1i, y1i, x2i, y2i), intrinsics)
+
+                det = Detection(
+                    label=str(labels[i]),
+                    score=float(scores[i]),
+                    box=(float(x1i), float(y1i), float(x2i), float(y2i)),
+                    # store the *goal phrase* and the pos score
+                    clip_label=goal,
+                    clip_score=float(scores_dict["pos"]),
+                    attr_neg_max=float(scores_dict["neg_max"]),
+                    attr_margin=float(scores_dict["margin"]),
+                    xyz_m=xyz,
+                )
+
+                det._attr_margin = float(scores_dict["margin"])  # python allows ad-hoc attrs
+                detections.append(det)
+                self._draw_detection(overlay, det)
+            
+            detections.sort(key=lambda d: (d.clip_score if d.clip_score is not None else -1e9), reverse=True)
 
             return detections, overlay
 
