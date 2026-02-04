@@ -422,10 +422,10 @@ class VisionPipeline:
             labels = res0["labels"]
 
             masks = self._sam3_segment_boxes(rgb, boxes_xyxy)
-            for det, mask in zip(top, masks):
+            for mask in zip,masks:
                 self._draw_mask_overlay(overlay, mask)
                 mask_crop = masked_crop_for_clip(rgb, mask)
-                scores_dict == self.clip_score_phrases(crop, goal, neg_phrases)
+                scores_dict == self.clip_score_phrases(mask_crop, goal, neg_phrases)
                 xyz = self._estimate_xyz_from_box(depth, (x1i, y1i, x2i, y2i), intrinsics)
 
                 det = Detection(
