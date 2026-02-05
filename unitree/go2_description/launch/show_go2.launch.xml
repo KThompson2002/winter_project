@@ -1,0 +1,17 @@
+<launch>
+    <arg name="use_jsp" default ="jsp"/>
+    <arg name="use_rviz" default="true" />
+    <arg name="use_nav2_links" default="false"/>
+
+    <node pkg="robot_state_publisher" exec="robot_state_publisher">
+    <param
+          name="robot_description"
+          value="$(command '$(exec-in-pkg xacro xacro)
+                $(find-pkg-share go2_description)/xacro/robot.xacro')" />
+    </node>
+
+    <node pkg="joint_state_publisher_gui" exec="joint_state_publisher_gui" if="$(eval '\'$(var use_jsp)\'==\'gui\'')" />
+    <node pkg="joint_state_publisher" exec="joint_state_publisher" if="$(eval '\'$(var use_jsp)\'== \'jsp\'')" />
+
+    <node pkg="rviz2" exec="rviz2" args="-d $(find-pkg-share go2_description)/config/view_go2.rviz"/>
+</launch>
