@@ -10,4 +10,5 @@
     </node>
 
     <node pkg="rviz2" exec="rviz2" args="-d $(find-pkg-share vlm_vision)/config/vl_vision.rviz"/>
+    <node pkg="vlm_vision" exec="goal_track"/>
 </launch>

@@ -41,7 +41,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'vision = vlm_vision.vision:main'
+            'vision = vlm_vision.vision:main',
+            'goal_track = vlm_vision.goal_track:main',
         ],
     },
 )
