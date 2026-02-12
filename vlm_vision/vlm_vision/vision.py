@@ -63,7 +63,7 @@ class Vision(Node):
         )
         self.declare_parameter(
             "text_prompt",
-            "a person. a backpack. a chair. a table. a door.",
+            "a blue backpack.",
             ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
         )
         self.declare_parameter(
@@ -242,7 +242,6 @@ class Vision(Node):
         if d.ndim == 3:
             d = d[:, :, 0]
 
-        # Prefer uint16 in mm (RealSense often provides that already)
         if d.dtype in (np.float32, np.float64):
             d = np.clip(d * 1000.0, 0, 65535).astype(np.uint16)
         elif d.dtype != np.uint16:
