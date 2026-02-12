@@ -76,7 +76,15 @@ class GoalTrack(Node):
         if center is None:
             return
 
-        # Broadcast camera -> goal transform
+        # Look up base_link -> goal from the *previous* broadcast before updating
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                'base_link', self.child_frame, rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=0.1))
+        except Exception as e:
+            self.get_logger().warn(f"Could not look up base_link -> {self.child_frame}: {e}")
+            tf = None
+
+        # Broadcast camera -> goal transform (available for next callback)
         t = TransformStamped()
         t.header.stamp = self.get_clock().now().to_msg()
         t.header.frame_id = parent_frame
@@ -87,12 +95,7 @@ class GoalTrack(Node):
         t.transform.rotation.w = 1.0
         self.broadcaster.sendTransform(t)
 
-        # Look up base_link -> goal and publish as goal pose for Nav2
-        try:
-            tf = self.tf_buffer.lookup_transform(
-                'base_link', self.child_frame, rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=0.5))
-        except Exception as e:
-            self.get_logger().warn(f"Could not look up base_link -> {self.child_frame}: {e}")
+        if tf is None:
             return
 
         gx = tf.transform.translation.x

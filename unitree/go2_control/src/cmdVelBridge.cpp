@@ -4,7 +4,7 @@
 #include <cmath>
 
 #include "rclcpp/rclcpp.hpp"
-#include "geometry_msgs/msg/twist.hpp"
+#include "geometry_msgs/msg/twist_stamped.hpp"
 #include "unitree_api/msg/request.hpp"
 #include "unitree_go/msg/sport_mode_state.hpp"
 #include "common/ros2_sport_client.h"
@@ -29,7 +29,7 @@ public:
  {
     this->declare_parameter<double>("frequency", 100.0);
     this->declare_parameter<std::string>("cmd_vel_topic", "/cmd_vel");
-    this->declare_parameter<bool>("send_standup_on_start", false);
+    this->declare_parameter<bool>("send_standup_on_start", true);
     this->declare_parameter<double>("max_linear_vel", 1.0);
     this->declare_parameter<double>("max_angular_vel", 1.5);
 
@@ -43,7 +43,7 @@ public:
         "sportmodestate", 10, std::bind(&cmdVelBridge::state_callback, this, std::placeholders::_1)
     );
     req_ = this->create_publisher<unitree_api::msg::Request>("/api/sport/request", 10);
-    cmd_sub = this->create_subscription<geometry_msgs::msg::Twist>(
+    cmd_sub = this->create_subscription<geometry_msgs::msg::TwistStamped>(
       cmd_vel_topic, 10, std::bind(&cmdVelBridge::twist_callback, this, std::placeholders::_1)
     );
 
@@ -62,8 +62,7 @@ public:
 private:
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Subscription<unitree_go::msg::SportModeState>::SharedPtr sport_state;
-  // rclcpp::Subscription<unitree_go2_nav_interfaces::msg::NavToPose>::SharedPtr nav_msg_sub;
-  rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub;
+  rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_sub;
   geometry_msgs::msg::Twist cmd_vel;
 
   rclcpp::Publisher<unitree_api::msg::Request>::SharedPtr req_;
@@ -81,9 +80,9 @@ private:
   State robot_state = State::IDLE;
   int current_mode_{0};
 
-  void twist_callback(const geometry_msgs::msg::Twist::SharedPtr msg)
+  void twist_callback(const geometry_msgs::msg::TwistStamped::SharedPtr msg)
   {
-    cmd_vel = *msg;
+    cmd_vel = msg->twist;
     last_cmd_time_ = this->now();
     if (robot_state == State::IDLE)
     {

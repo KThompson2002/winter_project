@@ -69,7 +69,7 @@ def generate_launch_description():
         name='controller_server',
         output='screen',
         parameters=[params_file],
-        remappings=[('cmd_vel_nav', 'cmd_vel')],
+        # remappings=[('cmd_vel_nav', 'cmd_vel')],
     )
 
     planner_server = Node(
@@ -117,8 +117,7 @@ def generate_launch_description():
         package='go2_control',
         executable='cmd_vel_bridge',
         name='cmd_vel_bridge',
-        output='screen',
-        condition=UnlessCondition(LaunchConfiguration('test_mode')),
+        # condition=UnlessCondition(LaunchConfiguration('test_mode')),
     )
 
     # Nav goal client (forwards /goal_pose to Nav2 action server)
