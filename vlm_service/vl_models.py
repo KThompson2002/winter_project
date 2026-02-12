@@ -330,8 +330,8 @@ class VisionPipeline:
             grid_n = 8
             xs = np.linspace(0, w - 1, grid_n, dtype=int)
             ys = np.linspace(0, h - 1, grid_n, dtype=int)
-            input_points = [[[int(x), int(y)] for x in xs for y in ys]]
-            input_labels = [[1] * (grid_n * grid_n)]
+            input_points = [[[[int(x), int(y)]] for x in xs for y in ys]]
+            input_labels = [[[1] for _ in range(grid_n * grid_n)]]
 
             img_pil = Image.fromarray(rgb)
             inputs = self.sam3_processor(
