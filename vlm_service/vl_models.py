@@ -16,6 +16,7 @@ class Pipeline(Enum):
     Current state of the system.
     """
 
+    SAM3_ONLY = auto()
     SAM_CLIP = auto()
     DINO_CLIP = auto()
     DINO_CLIP_SAM = auto()
@@ -246,6 +247,7 @@ class VisionPipeline:
         from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
         from transformers import CLIPModel, CLIPProcessor
         from transformers import Sam3TrackerModel, Sam3TrackerProcessor
+        from transformers import Sam3Model, Sam3Processor
 
         self.torch = torch
 
@@ -265,10 +267,15 @@ class VisionPipeline:
         self.clip_model = CLIPModel.from_pretrained(self.clip_model_id)
         self.clip_model.to(self._device).eval()
 
-        # SAM3
+        # SAM3 Tracker (for point/box prompts)
         self.sam3_processor = Sam3TrackerProcessor.from_pretrained("facebook/sam3")
         self.sam3_model = Sam3TrackerModel.from_pretrained("facebook/sam3").to(self._device)
         self.sam3_model.eval()
+
+        # SAM3 PCS (for text-prompted segmentation)
+        self.sam3_pcs_processor = Sam3Processor.from_pretrained("facebook/sam3")
+        self.sam3_pcs_model = Sam3Model.from_pretrained("facebook/sam3").to(self._device)
+        self.sam3_pcs_model.eval()
 
         with torch.no_grad():
             text_inputs = self.clip_processor(
@@ -318,7 +325,58 @@ class VisionPipeline:
             detections: list of Detection
             overlay_rgb: RGB image with boxes/labels
         """
-        if self.state == Pipeline.SAM_CLIP:
+        if self.state == Pipeline.SAM3_ONLY:
+            torch = self.torch
+            h, w = rgb.shape[:2]
+            overlay = rgb.copy()
+
+            goal = extract_goal_phrase(self.text_prompt)
+            img_pil = Image.fromarray(rgb)
+
+            inputs = self.sam3_pcs_processor(
+                images=img_pil, text=goal, return_tensors="pt"
+            ).to(self._device)
+
+            with torch.no_grad():
+                outputs = self.sam3_pcs_model(**inputs)
+
+            results = self.sam3_pcs_processor.post_process_instance_segmentation(
+                outputs,
+                threshold=0.5,
+                mask_threshold=0.5,
+                target_sizes=inputs.get("original_sizes").tolist(),
+            )[0]
+
+            detections: List[Detection] = []
+            masks = results.get("masks", [])
+            boxes = results.get("boxes", [])
+            scores = results.get("scores", [])
+
+            for i in range(len(masks)):
+                mask = masks[i].cpu().numpy().astype(np.uint8)
+                score = float(scores[i])
+                box = boxes[i].tolist() if hasattr(boxes[i], 'tolist') else list(boxes[i])
+                x1, y1, x2, y2 = [int(v) for v in box]
+                xyz = self._estimate_xyz_from_box(depth, (x1, y1, x2, y2), intrinsics)
+
+                det = Detection(
+                    label=goal,
+                    score=score,
+                    box=(float(x1), float(y1), float(x2), float(y2)),
+                    clip_label=goal,
+                    clip_score=score,
+                    attr_neg_max=None,
+                    attr_margin=None,
+                    xyz_m=xyz,
+                )
+                detections.append(det)
+                self._draw_mask_overlay(overlay, mask)
+                self._draw_detection(overlay, det)
+
+            detections.sort(key=lambda d: d.score, reverse=True)
+            return detections, overlay
+
+        elif self.state == Pipeline.SAM_CLIP:
             torch = self.torch
             h, w = rgb.shape[:2]
             overlay = rgb.copy()
