@@ -43,6 +43,7 @@ setup(
         'console_scripts': [
             'vision = vlm_vision.vision:main',
             'goal_track = vlm_vision.goal_track:main',
+            'frame_recorder = vlm_vision.frame_recorder:main',
         ],
     },
 )

@@ -17,9 +17,9 @@ class Pipeline(Enum):
     """
 
     SAM_CLIP = auto()
+    DINO_CLIP = auto()
     DINO_CLIP_SAM = auto()
     DINO_SAM_CLIP = auto()
-    CAUGHT = auto()
 
 STOPWORDS = {
     "go", "goto", "move", "walk", "head", "navigate", "drive",
@@ -270,15 +270,12 @@ class VisionPipeline:
         self.sam3_model = Sam3TrackerModel.from_pretrained("facebook/sam3").to(self._device)
         self.sam3_model.eval()
 
-        # Precompute CLIP text embeddings (normalized)
         with torch.no_grad():
             text_inputs = self.clip_processor(
                 text=self.clip_labels,
                 return_tensors="pt",
                 padding=True,
             ).to(self._device)
-            # text_feats = self.clip_model.get_text_features(**text_inputs)
-            # self.clip_text_features = text_feats / text_feats.norm(dim=-1, keepdim=True)
             with torch.no_grad():
                 text_inputs = self.clip_processor(
                     text=self.clip_labels,
@@ -288,7 +285,6 @@ class VisionPipeline:
 
                 text_feats = self.clip_model.get_text_features(**text_inputs)
 
-                # Some versions return a ModelOutput; unwrap to tensor
                 if not torch.is_tensor(text_feats):
                     # try common fields
                     if hasattr(text_feats, "pooler_output"):
@@ -322,7 +318,122 @@ class VisionPipeline:
             detections: list of Detection
             overlay_rgb: RGB image with boxes/labels
         """
-        if self.state == Pipeline.DINO_CLIP_SAM:
+        if self.state == Pipeline.SAM_CLIP:
+            torch = self.torch
+            h, w = rgb.shape[:2]
+            overlay = rgb.copy()
+
+            goal = extract_goal_phrase(self.text_prompt)
+            neg_phrases = GENERIC_NEGATIVES
+
+            # Automatic mask generation: grid of points over the image
+            grid_n = 8
+            xs = np.linspace(0, w - 1, grid_n, dtype=int)
+            ys = np.linspace(0, h - 1, grid_n, dtype=int)
+            input_points = [[[int(x), int(y)] for x in xs for y in ys]]
+            input_labels = [[1] * (grid_n * grid_n)]
+
+            img_pil = Image.fromarray(rgb)
+            inputs = self.sam3_processor(
+                images=img_pil,
+                input_points=input_points,
+                input_labels=input_labels,
+                return_tensors="pt",
+            ).to(self._device)
+
+            with torch.no_grad():
+                outputs = self.sam3_model(**inputs, multimask_output=False)
+
+            masks = self.sam3_processor.post_process_masks(
+                outputs.pred_masks.cpu(),
+                inputs["original_sizes"],
+            )[0]
+            masks = masks[:, 0, :, :]
+            masks = (masks > 0).to(torch.uint8).numpy()
+
+            detections: List[Detection] = []
+            for i, mask in enumerate(masks):
+                bbox = mask_to_bbox(mask)
+                if bbox is None:
+                    continue
+                x1, y1, x2, y2 = bbox
+                mask_crop = masked_crop_for_clip(rgb, mask)
+                if mask_crop is None:
+                    continue
+                scores_dict = self.clip_score_phrases(mask_crop, goal, neg_phrases)
+                xyz = self._estimate_xyz_from_box(depth, (x1, y1, x2, y2), intrinsics)
+
+                det = Detection(
+                    label="sam_region",
+                    score=float(scores_dict["pos"]),
+                    box=(float(x1), float(y1), float(x2), float(y2)),
+                    clip_label=goal,
+                    clip_score=float(scores_dict["pos"]),
+                    attr_neg_max=float(scores_dict["neg_max"]),
+                    attr_margin=float(scores_dict["margin"]),
+                    xyz_m=xyz,
+                )
+                detections.append(det)
+                self._draw_mask_overlay(overlay, mask)
+                self._draw_detection(overlay, det)
+
+            detections.sort(key=lambda d: (d.clip_score if d.clip_score is not None else -1e9), reverse=True)
+            return detections, overlay
+
+        elif self.state == Pipeline.DINO_CLIP:
+            torch = self.torch
+            h, w = rgb.shape[:2]
+            overlay = rgb.copy()
+
+            goal = extract_goal_phrase(self.text_prompt)
+            neg_phrases = GENERIC_NEGATIVES
+            text_labels = [[goal]]
+
+            inputs = self.gdino_processor(images=rgb, text=text_labels, return_tensors="pt").to(self._device)
+            with torch.no_grad():
+                outputs = self.gdino_model(**inputs)
+
+            results = self.gdino_processor.post_process_grounded_object_detection(
+                outputs,
+                inputs.input_ids,
+                threshold=self.box_threshold,
+                text_threshold=self.text_threshold,
+                target_sizes=[(h, w)],
+            )
+
+            if not results or len(results[0].get("boxes", [])) == 0:
+                return [], overlay
+
+            res0 = results[0]
+            boxes_xyxy = res0["boxes"].detach().cpu().numpy()
+            scores = res0["scores"].detach().cpu().numpy()
+            labels = res0["labels"]
+
+            detections: List[Detection] = []
+            for i in range(len(boxes_xyxy)):
+                x1, y1, x2, y2 = boxes_xyxy[i].tolist()
+                x1i, y1i, x2i, y2i = self._pad_and_clip_box(x1, y1, x2, y2, w, h, 4)
+                crop = rgb[y1i:y2i, x1i:x2i]
+                scores_dict = self.clip_score_phrases(crop, goal, neg_phrases)
+                xyz = self._estimate_xyz_from_box(depth, (x1i, y1i, x2i, y2i), intrinsics)
+
+                det = Detection(
+                    label=str(labels[i]),
+                    score=float(scores[i]),
+                    box=(float(x1i), float(y1i), float(x2i), float(y2i)),
+                    clip_label=goal,
+                    clip_score=float(scores_dict["pos"]),
+                    attr_neg_max=float(scores_dict["neg_max"]),
+                    attr_margin=float(scores_dict["margin"]),
+                    xyz_m=xyz,
+                )
+                detections.append(det)
+                self._draw_detection(overlay, det)
+
+            detections.sort(key=lambda d: (d.clip_score if d.clip_score is not None else -1e9), reverse=True)
+            return detections, overlay
+
+        elif self.state == Pipeline.DINO_CLIP_SAM:
             torch = self.torch
             h, w = rgb.shape[:2]
             overlay = rgb.copy()
