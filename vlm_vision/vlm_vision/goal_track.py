@@ -12,6 +12,7 @@ from rclpy.qos import QoSProfile
 from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 
 from std_msgs.msg import String
+from std_srvs.srv import Empty
 from geometry_msgs.msg import PoseStamped, TransformStamped
 from tf2_ros import TransformBroadcaster, Buffer, TransformListener
 
@@ -51,6 +52,9 @@ class GoalTrack(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.goal_pub = self.create_publisher(PoseStamped, "/goal_pose", qos_profile)
 
+        self.send_goal_requested = False
+        self.create_service(Empty, 'send_goal', self._send_goal_cb)
+
         self.sub = self.create_subscription(
             String,
             self.detections_topic,
@@ -58,6 +62,11 @@ class GoalTrack(Node):
             qos_profile,
         )
 
+
+    def _send_goal_cb(self, request, response):
+        self.send_goal_requested = True
+        self.get_logger().info("Goal send requested")
+        return response
 
     def _detections_cb(self, msg: String) -> None:
         try:
@@ -95,8 +104,10 @@ class GoalTrack(Node):
         t.transform.rotation.w = 1.0
         self.broadcaster.sendTransform(t)
 
-        if tf is None:
+        if tf is None or not self.send_goal_requested:
             return
+
+        self.send_goal_requested = False
 
         gx = tf.transform.translation.x
         gy = tf.transform.translation.y

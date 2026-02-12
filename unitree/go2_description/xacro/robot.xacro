@@ -95,7 +95,7 @@
     <joint name="mounted_camera" type="fixed">
         <parent link="trunk"/>
         <child link="mounted_camera"/>
-        <origin rpy="0 1.5708 0" xyz="0.29515 -0.00003 0.06"/>
+        <origin rpy="3.1416 -1.5708 0" xyz="0.29515 -0.00003 0.06"/>
     </joint>
 
     <link name="mounted_camera">
