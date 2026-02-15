@@ -1,9 +1,9 @@
 <launch>
-    <include file="$(find-pkg-share realsense2_camera)/launch/rs_launch.py">
-        <arg name="align_depth.enable" value="true"/>
+    <!-- <include file="$(find-pkg-share realsense2_camera)/launch/rs_launch.py">
+        <arg name="align_depth.enable" value="true"/> -->
         <!-- <arg name="depth_module.depth_profile" value="640x480x60"/>
         <arg name="rgb_camera.color_profile" value="640x480x60"/> -->
-    </include>
+    <!-- </include> -->
 
     <node pkg="vlm_vision" exec="vision">
         <param from="$(find-pkg-share vlm_vision)/config/vl_vision.yaml" />

@@ -1,10 +1,9 @@
-/vl_vision:
+/vlm_vision:
   ros__parameters:
-    # device: cpu
     inference_hz: 3.0
-    image_topic: /camera/image_raw
-    color_image_topic: /camera/camera/color/image_raw
-    depth_image_topic: /camera/camera/aligned_depth_to_color/image_raw
+    image_topic: /camera/color/image_raw
+    color_image_topic: /camera/color/image_raw
+    depth_image_topic: /camera/depth/image_rect_raw
     camera_info: /camera/camera/color/camera_info
     box_threshold: 0.35
     text_threshold: 0.25

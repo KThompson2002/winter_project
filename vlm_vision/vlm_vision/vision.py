@@ -43,17 +43,17 @@ class Vision(Node):
         )
         self.declare_parameter(
             'color_image_topic',
-            '/camera/camera/color/image_raw',
+            '/camera/color/image_raw',
             ParameterDescriptor(type=ParameterType.PARAMETER_STRING)
         )
         self.declare_parameter(
             'depth_image_topic',
-            '/camera/camera/aligned_depth_to_color/image_raw',
+            '/camera/depth/image_rect_raw',
             ParameterDescriptor(type=ParameterType.PARAMETER_STRING)
         )
         self.declare_parameter(
             'camera_info_topic',
-            '/camera/camera/color/camera_info',
+            '/camera/color/camera_info',
             ParameterDescriptor(type=ParameterType.PARAMETER_STRING)
         )
         self.declare_parameter(
