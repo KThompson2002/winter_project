@@ -11,6 +11,8 @@ def generate_launch_description():
     use_nav_goal_arg = DeclareLaunchArgument('use_nav_goal_client', default_value='true')
     test_mode_arg = DeclareLaunchArgument('test_mode', default_value='false',
         description='Run without robot connection using static transforms')
+    publish_map_to_odom_arg = DeclareLaunchArgument('publish_map_to_odom', default_value='true',
+        description='Set false when using RTAB-Map (it publishes map->odom)')
 
     go2_control_share = FindPackageShare('go2_control')
     go2_description_share = FindPackageShare('go2_description')
@@ -29,10 +31,20 @@ def generate_launch_description():
         }]
     )
 
-    # Joint state publisher (publishes fixed joint states for standing pose)
+    # Joint state publisher — reads actual motor angles from /lowstate
     joint_state_publisher = Node(
+        package='go2_control',
+        executable='go2_joint_state_publisher',
+        name='go2_joint_state_publisher',
+        output='screen',
+        condition=UnlessCondition(LaunchConfiguration('test_mode')),
+    )
+
+    # In test mode fall back to the static joint_state_publisher
+    joint_state_publisher_test = Node(
         package='joint_state_publisher',
         executable='joint_state_publisher',
+        condition=IfCondition(LaunchConfiguration('test_mode')),
     )
 
     # --- Real robot: odom publisher provides map->odom and odom->base_link from sportmodestate ---
@@ -41,6 +53,9 @@ def generate_launch_description():
         executable='go2_odom_publisher',
         name='go2_odom_publisher',
         output='screen',
+        parameters=[{
+            'publish_map_to_odom': LaunchConfiguration('publish_map_to_odom'),
+        }],
         condition=UnlessCondition(LaunchConfiguration('test_mode')),
     )
 
@@ -148,8 +163,10 @@ def generate_launch_description():
         use_rviz_arg,
         use_nav_goal_arg,
         test_mode_arg,
+        publish_map_to_odom_arg,
         robot_state_publisher,
         joint_state_publisher,
+        joint_state_publisher_test,
         odom_publisher,
         test_map_to_odom,
         test_odom_to_base,

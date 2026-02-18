@@ -1,0 +1,21 @@
+rtabmap:
+  ros__parameters:
+    frame_id: base_link
+    odom_frame_id: odom
+    map_frame_id: map
+    subscribe_depth: True
+    subscribe_scan_cloud: True
+    approx_sync: True
+    queue_size: 10
+    use_action_for_goal: True
+    Mem/IncrementalMemory: 'true'
+    Reg/Strategy: '2'
+    Reg/Force3DoF: 'false'
+
+    Grid/3D: 'true'
+    Grid/FromDepth: 'true'
+    
+    Vis/MaxDepth: '3.0'
+    Vis/MinInliers: '10'
+    approx_sync_max_interval: 1.0
+

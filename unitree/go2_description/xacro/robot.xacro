@@ -65,6 +65,15 @@
         </inertial>
     </link>
 
+    <joint name="lidar_joint" type="fixed">
+        <parent link="trunk"/>
+        <child link="utlidar_lidar"/>
+        <origin rpy="0 -0.2 0" xyz="0.29515 -0.00003 -0.06597"/>
+    </joint>
+
+    <link name="utlidar_lidar">
+    </link>
+
     <joint name="imu_joint" type="fixed">
         <parent link="trunk"/>
         <child link="imu_link"/>
@@ -92,13 +101,13 @@
         </collision>
     </link>
 
-    <joint name="mounted_camera" type="fixed">
+    <joint name="camera_joint" type="fixed">
         <parent link="trunk"/>
-        <child link="mounted_camera"/>
+        <child link="camera_link"/>
         <origin rpy="3.1416 -1.5708 0" xyz="0.29515 -0.00003 0.06"/>
     </joint>
 
-    <link name="mounted_camera">
+    <link name="camera_link">
     </link>
 
     <joint name="front_camera_joint" type="fixed">

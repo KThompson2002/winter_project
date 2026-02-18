@@ -18,6 +18,7 @@ find_package(nav2_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(unitree_go REQUIRED)
 find_package(unitree_api REQUIRED)
 
@@ -50,11 +51,18 @@ ament_target_dependencies(nav_goal_client
   rclcpp rclcpp_action geometry_msgs nav2_msgs
 )
 
+# -- go2_joint_state_publisher --
+add_executable(go2_joint_state_publisher src/go2JointStatePublisher.cpp)
+ament_target_dependencies(go2_joint_state_publisher
+  rclcpp sensor_msgs unitree_go
+)
+
 # Install executables
 install(TARGETS
   cmd_vel_bridge
   go2_odom_publisher
   nav_goal_client
+  go2_joint_state_publisher
   DESTINATION lib/${PROJECT_NAME}
 )
 
