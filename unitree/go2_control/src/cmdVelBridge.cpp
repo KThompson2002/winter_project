@@ -32,12 +32,14 @@ public:
     this->declare_parameter<bool>("send_standup_on_start", true);
     this->declare_parameter<double>("max_linear_vel", 1.0);
     this->declare_parameter<double>("max_angular_vel", 1.5);
+    this->declare_parameter<double>("cmd_vel_timeout", 0.5);
 
     cmd_vel_topic = this->get_parameter("cmd_vel_topic").as_string();
     freq = this->get_parameter("frequency").as_double();
     send_standup_on_start = this->get_parameter("send_standup_on_start").as_bool();
     max_linear_vel = this->get_parameter("max_linear_vel").as_double();
     max_angular_vel = this->get_parameter("max_angular_vel").as_double();
+    cmd_vel_timeout_ = this->get_parameter("cmd_vel_timeout").as_double();
 
     sport_state = this->create_subscription<unitree_go::msg::SportModeState>(
         "sportmodestate", 10, std::bind(&cmdVelBridge::state_callback, this, std::placeholders::_1)
@@ -53,11 +55,13 @@ public:
       std::bind(&cmdVelBridge::timer_callback, this)
     );
 
-    if (send_standup_on_start) 
+    if (send_standup_on_start)
     {
       robot_state = State::STANDING;
     }
-    
+
+    // Initialise to now so the timeout doesn't fire immediately on startup
+    last_cmd_time_ = this->now();
  }
 private:
   rclcpp::TimerBase::SharedPtr timer_;
@@ -74,6 +78,7 @@ private:
   bool send_standup_on_start{true};
   double max_linear_vel{1.0};
   double max_angular_vel{1.5};
+  double cmd_vel_timeout_{0.5};
 
   rclcpp::Time last_cmd_time_;
   rclcpp::Time standup_time_;
@@ -84,13 +89,16 @@ private:
   {
     cmd_vel = msg->twist;
     last_cmd_time_ = this->now();
-    if (robot_state == State::IDLE)
-    {
-      const double eps = 1e-3;
-      const bool is_zero = (std::abs(cmd_vel.linear.x) < eps 
-        && std::abs(cmd_vel.linear.y) < eps && std::abs(cmd_vel.angular.z) < eps);
-      if (!is_zero) robot_state = State::MOVING;
+
+    // Only update IDLE/MOVING — don't interrupt standup sequence
+    if (robot_state != State::IDLE && robot_state != State::MOVING) {
+      return;
     }
+
+    const double eps = 1e-3;
+    const bool is_zero = (std::abs(cmd_vel.linear.x) < eps
+      && std::abs(cmd_vel.linear.y) < eps && std::abs(cmd_vel.angular.z) < eps);
+    robot_state = is_zero ? State::IDLE : State::MOVING;
   }
 
   void state_callback(const unitree_go::msg::SportModeState::SharedPtr msg)
@@ -126,6 +134,15 @@ private:
       }
     }
 
+    // Watchdog: stop if cmd_vel has gone silent
+    if (robot_state == State::MOVING) {
+      const double elapsed = (this->now() - last_cmd_time_).seconds();
+      if (elapsed > cmd_vel_timeout_) {
+        robot_state = State::IDLE;
+        RCLCPP_INFO(get_logger(), "cmd_vel timeout (%.2fs), stopping robot", elapsed);
+      }
+    }
+
     double vx = cmd_vel.linear.x;
     double vy = cmd_vel.linear.y;
     double wz = cmd_vel.angular.z;
@@ -136,12 +153,12 @@ private:
 
     if (robot_state == State::MOVING)
     {
-      sport_req.Move(req, 
-                      static_cast<float>(vx), 
-                      static_cast<float>(vy), 
+      sport_req.Move(req,
+                      static_cast<float>(vx),
+                      static_cast<float>(vy),
                       static_cast<float>(wz));
     }
-    else 
+    else
     {
       sport_req.StopMove(req);
     }
