@@ -44,6 +44,7 @@ setup(
             'vision = vlm_vision.vision:main',
             'goal_track = vlm_vision.goal_track:main',
             'frame_recorder = vlm_vision.frame_recorder:main',
+            'topic_restamper = vlm_vision.topic_restamper:main',
         ],
     },
 )

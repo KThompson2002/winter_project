@@ -77,7 +77,7 @@ class GoalTrack(Node):
 
         # Choose parent frame:
         # Vision publishes frame_id in the payload :contentReference[oaicite:8]{index=8}
-        parent_frame = self.parent_frame_override or "mounted_camera"
+        parent_frame = self.parent_frame_override or "camera_link"
 
         center: Optional[cv.GoalCenter] = cv.get_center(
             payload
