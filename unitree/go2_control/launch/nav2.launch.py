@@ -1,37 +1,35 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, Command
 from launch.conditions import IfCondition, UnlessCondition
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 
-def generate_launch_description():
-    use_rviz_arg = DeclareLaunchArgument('use_rviz', default_value='true')
-    use_nav_goal_arg = DeclareLaunchArgument('use_nav_goal_client', default_value='true')
-    test_mode_arg = DeclareLaunchArgument('test_mode', default_value='false',
-        description='Run without robot connection using static transforms')
-    publish_map_to_odom_arg = DeclareLaunchArgument('publish_map_to_odom', default_value='true',
-        description='Set false when using RTAB-Map (it publishes map->odom)')
+def launch_setup(context, *args, **kwargs):
+    go2_control_share = FindPackageShare('go2_control').find('go2_control')
+    go2_description_share = FindPackageShare('go2_description').find('go2_description')
 
-    go2_control_share = FindPackageShare('go2_control')
-    go2_description_share = FindPackageShare('go2_description')
+    import os
+    params_file = os.path.join(go2_control_share, 'config', 'nav2_params.yaml')
 
-    params_file = PathJoinSubstitution([go2_control_share, 'config', 'nav2_params.yaml'])
+    costmap_source = LaunchConfiguration('global_costmap').perform(context)
+    if costmap_source == 'voxel':
+        costmap_params = os.path.join(go2_control_share, 'config', 'global_costmap_voxel.yaml')
+    else:
+        costmap_params = os.path.join(go2_control_share, 'config', 'global_costmap_static.yaml')
 
-    # Robot state publisher (loads URDF from xacro)
     robot_state_publisher = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
         parameters=[{
             'robot_description': Command([
                 'xacro ',
-                PathJoinSubstitution([go2_description_share, 'xacro', 'robot.xacro'])
+                os.path.join(go2_description_share, 'xacro', 'robot.xacro')
             ])
         }]
     )
 
-    # Joint state publisher — reads actual motor angles from /lowstate
     joint_state_publisher = Node(
         package='go2_control',
         executable='go2_joint_state_publisher',
@@ -40,14 +38,12 @@ def generate_launch_description():
         condition=UnlessCondition(LaunchConfiguration('test_mode')),
     )
 
-    # In test mode fall back to the static joint_state_publisher
     joint_state_publisher_test = Node(
         package='joint_state_publisher',
         executable='joint_state_publisher',
         condition=IfCondition(LaunchConfiguration('test_mode')),
     )
 
-    # --- Real robot: odom publisher provides map->odom and odom->base_link from sportmodestate ---
     odom_publisher = Node(
         package='go2_control',
         executable='go2_odom_publisher',
@@ -59,7 +55,6 @@ def generate_launch_description():
         condition=UnlessCondition(LaunchConfiguration('test_mode')),
     )
 
-    # --- Test mode: static transforms to simulate odom without robot connection ---
     test_map_to_odom = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
@@ -76,15 +71,12 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('test_mode')),
     )
 
-    # --- Minimal Nav2 stack (no collision monitor, no velocity smoother) ---
-
     controller_server = Node(
         package='nav2_controller',
         executable='controller_server',
         name='controller_server',
         output='screen',
-        parameters=[params_file],
-        # remappings=[('cmd_vel_nav', 'cmd_vel')],
+        parameters=[params_file, costmap_params],
     )
 
     planner_server = Node(
@@ -92,7 +84,7 @@ def generate_launch_description():
         executable='planner_server',
         name='planner_server',
         output='screen',
-        parameters=[params_file],
+        parameters=[params_file, costmap_params],
     )
 
     behavior_server = Node(
@@ -100,7 +92,7 @@ def generate_launch_description():
         executable='behavior_server',
         name='behavior_server',
         output='screen',
-        parameters=[params_file],
+        parameters=[params_file, costmap_params],
     )
 
     bt_navigator = Node(
@@ -108,7 +100,7 @@ def generate_launch_description():
         executable='bt_navigator',
         name='bt_navigator',
         output='screen',
-        parameters=[params_file],
+        parameters=[params_file, costmap_params],
     )
 
     lifecycle_manager = Node(
@@ -127,15 +119,12 @@ def generate_launch_description():
         }],
     )
 
-    # cmd_vel bridge (forwards cmd_vel Twist commands to Unitree sport API)
     cmd_vel_bridge = Node(
         package='go2_control',
         executable='cmd_vel_bridge',
         name='cmd_vel_bridge',
-        # condition=UnlessCondition(LaunchConfiguration('test_mode')),
     )
 
-    # Nav goal client (forwards /goal_pose to Nav2 action server)
     nav_goal_client = Node(
         package='go2_control',
         executable='nav_goal_client',
@@ -144,26 +133,17 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('use_nav_goal_client')),
     )
 
-    # RViz2 (optional)
     rviz = Node(
         package='rviz2',
         executable='rviz2',
         condition=IfCondition(LaunchConfiguration('use_rviz')),
         arguments=[
-                    '-d',
-                    PathJoinSubstitution(
-                        [FindPackageShare(
-                            'go2_control'
-                        ), 'config', 'nav.rviz']
-                    ),
-                ],
+            '-d',
+            os.path.join(go2_control_share, 'config', 'nav.rviz')
+        ],
     )
 
-    return LaunchDescription([
-        use_rviz_arg,
-        use_nav_goal_arg,
-        test_mode_arg,
-        publish_map_to_odom_arg,
+    return [
         robot_state_publisher,
         joint_state_publisher,
         joint_state_publisher_test,
@@ -178,4 +158,26 @@ def generate_launch_description():
         cmd_vel_bridge,
         nav_goal_client,
         rviz,
+    ]
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        DeclareLaunchArgument('use_rviz', default_value='true'),
+        DeclareLaunchArgument('use_nav_goal_client', default_value='true'),
+        DeclareLaunchArgument('test_mode', default_value='false',
+            description='Run without robot connection using static transforms'),
+        DeclareLaunchArgument('publish_map_to_odom', default_value='true',
+            description='Set false when using RTAB-Map (it publishes map->odom)'),
+        DeclareLaunchArgument(
+            'global_costmap',
+            default_value='voxel',
+            choices=['voxel', 'static'],
+            description=(
+                'Global costmap obstacle source. '
+                '"voxel" uses live lidar point cloud (dynamic); '
+                '"static" uses RTAB-Map 2D occupancy grid.'
+            ),
+        ),
+        OpaqueFunction(function=launch_setup),
     ])

@@ -30,7 +30,9 @@ def generate_launch_description():
             Node(
                 package='rtabmap_slam',
                 executable='rtabmap',
+                output='screen',
                 parameters=[params_file],
+                
                 remappings=[
                     ('rgb/image',       rgb_image),
                     ('rgb/camera_info', camera_info),

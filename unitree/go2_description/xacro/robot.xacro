@@ -104,10 +104,22 @@
     <joint name="camera_joint" type="fixed">
         <parent link="trunk"/>
         <child link="camera_link"/>
-        <origin rpy="3.1416 -1.5708 0" xyz="0.29515 -0.00003 0.06"/>
+        <origin rpy="0 0 0" xyz="0.29515 -0.00003 0.06"/>
     </joint>
 
     <link name="camera_link">
+    </link>
+
+    <!-- Separate frame used by the vision goal pipeline.
+         Keeps the original rotation so that z_m (depth) maps to the forward
+         direction expected by goal_track's TF broadcast. -->
+    <joint name="camera_vision_joint" type="fixed">
+        <parent link="trunk"/>
+        <child link="camera_vision_link"/>
+        <origin rpy="3.1416 -1.5708 0" xyz="0.29515 -0.00003 0.06"/>
+    </joint>
+
+    <link name="camera_vision_link">
     </link>
 
     <joint name="front_camera_joint" type="fixed">
