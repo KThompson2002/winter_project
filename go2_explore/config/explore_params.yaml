@@ -1,0 +1,31 @@
+explorer:
+  ros__parameters:
+    # The object or scene description to search for.
+    # Passed directly to the VLM pipeline as the GroundingDINO text prompt.
+    text_prompt: "a blue backpack"
+
+    # Camera topic used by the vision node; detections are published on
+    # {image_topic}_detections.
+    image_topic: /camera/color/image_raw
+
+    # RTAB-Map occupancy grid topic.
+    map_topic: /map
+
+    # TF frames.
+    robot_base_frame: base_link
+    map_frame: map
+
+    # Number of consecutive detection frames required before switching from
+    # EXPLORING to NAVIGATING.  Higher values reduce false positives.
+    detection_threshold: 3
+
+    # Minimum number of frontier cells in a cluster to be considered a valid
+    # navigation target.  Filters noise at map edges.
+    min_frontier_size: 10
+
+    # Radius (metres) around a failed frontier goal that will be blacklisted
+    # to prevent repeated re-visits.
+    frontier_blacklist_radius: 0.5
+
+    # Rate (Hz) at which the exploration state machine ticks.
+    tick_rate: 1.0
