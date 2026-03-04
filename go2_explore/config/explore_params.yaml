@@ -21,11 +21,30 @@ explorer:
 
     # Minimum number of frontier cells in a cluster to be considered a valid
     # navigation target.  Filters noise at map edges.
-    min_frontier_size: 10
+    min_frontier_size: 5
 
     # Radius (metres) around a failed frontier goal that will be blacklisted
     # to prevent repeated re-visits.
-    frontier_blacklist_radius: 0.5
+    frontier_blacklist_radius: 1.0
+
+    # How far (metres) to pull the goal back from the frontier centroid toward
+    # the robot.  Keeps the Nav2 goal in clear free space rather than on the
+    # free/unknown boundary where the inflation layer marks cells in-collision.
+    frontier_goal_offset: 0.4
+
+    # Minimum distance (metres) from the robot to a frontier centroid.
+    # Frontiers closer than this are skipped — they produce trivially short
+    # nav goals that the controller satisfies without the robot actually moving.
+    min_frontier_distance: 0.8
+
+    # How many consecutive ticks with no valid frontier before relaxing
+    # min_frontier_distance and trying again. At 1 Hz this is 20 seconds.
+    no_frontier_idle_threshold: 20
 
     # Rate (Hz) at which the exploration state machine ticks.
-    tick_rate: 1.0
+    freq: 1.0
+
+    # When true, disables VLM detection subscription and the NAVIGATING state.
+    # The robot will explore all frontiers and then stop.  Use for autonomous
+    # mapping runs without a target object.
+    mapping_only: false

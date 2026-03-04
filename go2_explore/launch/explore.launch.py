@@ -1,5 +1,6 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import UnlessCondition
 from launch.launch_description_sources import (
     AnyLaunchDescriptionSource,
     PythonLaunchDescriptionSource,
@@ -36,6 +37,12 @@ def generate_launch_description():
             default_value='static',
             description='Global costmap source passed to slam_nav.',
         ),
+        DeclareLaunchArgument(
+            'mapping_only',
+            default_value='false',
+            description='Explore all frontiers without looking for a target object. '
+                        'Skips the VLM vision pipeline.',
+        ),
 
         # ------------------------------------------------------------------ #
         # SLAM + Nav2
@@ -62,6 +69,7 @@ def generate_launch_description():
                     [vlm_vision_share, 'launch', 'vision.launch.xml']
                 )
             ),
+            condition=UnlessCondition(LaunchConfiguration('mapping_only')),
         ),
 
         # ------------------------------------------------------------------ #
@@ -71,7 +79,7 @@ def generate_launch_description():
             package='go2_explore',
             executable='explorer',
             name='explorer',
-            parameters=[params_file],
+            parameters=[params_file, {'mapping_only': LaunchConfiguration('mapping_only')}],
             output='screen',
         ),
     ])

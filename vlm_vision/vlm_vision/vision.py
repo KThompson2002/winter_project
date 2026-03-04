@@ -11,7 +11,7 @@ import requests
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile
+from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image
 
 import json
@@ -31,6 +31,14 @@ class Vision(Node):
         self.get_logger().info('vision init')
         qos_profile = QoSProfile(depth=10)
 
+        # Camera drivers (RealSense, etc.) publish with BEST_EFFORT/VOLATILE QoS.
+        # Using RELIABLE here causes a QoS mismatch — no messages are ever received.
+        sensor_qos = QoSProfile(
+            depth=10,
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            durability=QoSDurabilityPolicy.VOLATILE,
+        )
+
         # self.declare_parameter(
         #     'pipeline',
         #     'dino_sam_clip',
@@ -48,7 +56,7 @@ class Vision(Node):
         )
         self.declare_parameter(
             'depth_image_topic',
-            '/camera/depth/image_rect_raw',
+            '/camera/aligned_depth_to_color/image_raw',
             ParameterDescriptor(type=ParameterType.PARAMETER_STRING)
         )
         self.declare_parameter(
@@ -112,18 +120,20 @@ class Vision(Node):
         self.color_sub = Subscriber(
             self,
             Image,
-            self.color_image_topic
+            self.color_image_topic,
+            qos_profile=sensor_qos,
         )
         self.depth_sub = Subscriber(
             self,
             Image,
-            self.depth_image_topic
+            self.depth_image_topic,
+            qos_profile=sensor_qos,
         )
         self.caminfo_sub = self.create_subscription(
             CameraInfo,
             self.camera_info_topic,
             self.camera_info_callback,
-            qos_profile
+            sensor_qos,
         )
 
         self.ts = ApproximateTimeSynchronizer(

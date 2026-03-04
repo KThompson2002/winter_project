@@ -12,7 +12,9 @@ SUB_QOS = QoSProfile(
     depth=10,
 )
 
-# RTABMap subscribes reliable/volatile
+# RELIABLE publisher is compatible with both:
+#   - RTAB-Map (RELIABLE subscriber) — exact match
+#   - Nav2 costmap (BEST_EFFORT subscriber) — sub requests less, pub offers more → OK
 PUB_QOS = QoSProfile(
     reliability=ReliabilityPolicy.RELIABLE,
     durability=DurabilityPolicy.VOLATILE,
@@ -47,6 +49,9 @@ class TopicRestamper(Node):
         info_topics = [
             '/camera/color/camera_info',
         ]
+        # The Unitree driver may publish these with a frame_id that doesn't
+        # match the URDF link name ('utlidar_lidar').  Override it here so
+        # TF lookups in RTAB-Map, Nav2 costmap, and RViz all resolve correctly.
         cloud_topics = [
             '/utlidar/cloud_deskewed',
             '/utlidar/cloud',
@@ -67,19 +72,21 @@ class TopicRestamper(Node):
         for topic in odom_topics:
             self._make_relay(topic, Odometry)
 
-    def _make_relay(self, topic: str, msg_type):
+    def _make_relay(self, topic: str, msg_type, frame_id_override: str = ''):
         out_topic = topic + '/restamped'
         pub = self.create_publisher(msg_type, out_topic, PUB_QOS)
         self.create_subscription(
             msg_type,
             topic,
-            lambda msg, p=pub: self._restamp(msg, p),
+            lambda msg, p=pub, f=frame_id_override: self._restamp(msg, p, f),
             SUB_QOS,
         )
         self.get_logger().info(f'{topic} -> {out_topic}')
 
-    def _restamp(self, msg, publisher):
+    def _restamp(self, msg, publisher, frame_id_override: str = ''):
         msg.header.stamp = self.get_clock().now().to_msg()
+        if frame_id_override:
+            msg.header.frame_id = frame_id_override
         publisher.publish(msg)
 
 

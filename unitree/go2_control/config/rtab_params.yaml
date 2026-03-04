@@ -12,16 +12,17 @@ rtabmap:
     Reg/Strategy: '2'
     Reg/Force3DoF: 'false'
 
-    Grid/3D: 'true'
+    Grid/3D: 'false'
     Grid/FromDepth: 'false'
 
-    # Floor / ceiling filtering for RTAB-Map's own occupancy grid (/map)
-    # Points below MinGroundHeight are treated as ground and excluded from obstacles.
-    # Go2 ground clearance ~0.18 m; use a small positive value to absorb tilt noise.
-    Grid/MinGroundHeight: '0.1'         # points below 0.1 m from base_link = ground, ignored
-    Grid/MaxObstacleHeight: '2.0'       # points above 2.0 m also ignored
-    Grid/RayTracing: 'true'             # ray-trace free space to clear cells behind obstacles
-    Grid/CellSize: '0.05'              # match Nav2 costmap resolution
+    # Floor / ceiling filtering for RTAB-Map's own occupancy grid (/map).
+    # Heights are in base_link frame; ground is at ~-0.28 m, LiDAR at z=-0.066 m.
+    # Nav2 local costmap uses min_obstacle_height=0.15 m in world frame (ground=0).
+    # Equivalent in base_link: 0.15 - 0.29 = -0.14 m. Using -0.15 m for small margin.
+    Grid/MinGroundHeight: '-0.15'
+    Grid/MaxObstacleHeight: '2.0'
+    Grid/RayTracing: 'true'
+    Grid/CellSize: '0.05'
 
     # How much of the local map is kept for scan-matching (OdomF2M)
     # Larger = more context for ICP, but heavier. 10 000 pts is a safe default.
@@ -30,4 +31,9 @@ rtabmap:
     Vis/MaxDepth: '3.0'
     Vis/MinInliers: '10'
     approx_sync_max_interval: 1.0
+
+    # 1 Hz gives the Livox MID360 a full second of non-repetitive scan data
+    # per keyframe, producing complete area coverage instead of thin arms.
+    # Increasing this causes sparse spoke-like map artifacts.
+    Rtabmap/DetectionRate: '1'
 

@@ -11,6 +11,7 @@ Panels:
         - /Map (2D)1
         - /Map (3D)1
         - /PointCloud21
+        - /Map1
       Splitter Ratio: 0.5
     Tree Height: 542
   - Class: rviz_common/Selection
@@ -219,6 +220,10 @@ Visualization Manager:
           Alpha: 1
           Show Axes: false
           Show Trail: false
+        camera_vision_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
         front_camera:
           Alpha: 1
           Show Axes: false
@@ -320,6 +325,8 @@ Visualization Manager:
           Value: true
         camera_link:
           Value: true
+        camera_vision_link:
+          Value: true
         front_camera:
           Value: true
         imu_link:
@@ -393,6 +400,8 @@ Visualization Manager:
                   camera_depth_frame:
                     camera_depth_optical_frame:
                       {}
+                camera_vision_link:
+                  {}
                 front_camera:
                   {}
                 imu_link:
@@ -427,8 +436,8 @@ Visualization Manager:
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 0.8007111549377441
-        Min Value: -0.24903056025505066
+        Max Value: 0.5810510516166687
+        Min Value: -0.07602694630622864
         Value: true
       Axis: Z
       Channel Name: intensity
@@ -472,9 +481,9 @@ Visualization Manager:
       Enabled: true
       Invert Rainbow: false
       Max Color: 255; 255; 255
-      Max Intensity: 255
+      Max Intensity: 207
       Min Color: 0; 0; 0
-      Min Intensity: 49
+      Min Intensity: 41
       Name: PointCloud2
       Position Transformer: XYZ
       Selectable: true
@@ -489,6 +498,29 @@ Visualization Manager:
         Value: /utlidar/cloud/restamped
       Use Fixed Frame: true
       Use rainbow: true
+      Value: true
+    - Alpha: 0.699999988079071
+      Binary representation: false
+      Binary threshold: 100
+      Class: rviz_default_plugins/Map
+      Color Scheme: map
+      Draw Behind: false
+      Enabled: true
+      Name: Map
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /global_costmap/voxel_layer
+      Update Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /global_costmap/voxel_layer_updates
+      Use Timestamp: false
       Value: true
   Enabled: true
   Global Options:
@@ -536,25 +568,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 8.19257640838623
+      Distance: 11.509980201721191
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 0
-        Y: 0
-        Z: 0
+        X: 0.6390930414199829
+        Y: 0.5116703510284424
+        Z: 0.13005220890045166
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.46039849519729614
+      Pitch: 1.3353980779647827
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 1.5004091262817383
+      Yaw: 4.6635918617248535
     Saved: ~
 Window Geometry:
   Displays:

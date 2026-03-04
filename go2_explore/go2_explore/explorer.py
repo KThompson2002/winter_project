@@ -44,9 +44,6 @@ class Explorer(Node):
     def __init__(self) -> None:
         super().__init__('explorer')
 
-        # ------------------------------------------------------------------ #
-        # Parameters
-        # ------------------------------------------------------------------ #
         self.declare_parameter('text_prompt', 'a blue backpack')
         self.declare_parameter('image_topic', '/camera/color/image_raw')
         self.declare_parameter('map_topic', '/map')
@@ -55,7 +52,11 @@ class Explorer(Node):
         self.declare_parameter('detection_threshold', 3)
         self.declare_parameter('min_frontier_size', 10)
         self.declare_parameter('frontier_blacklist_radius', 0.5)
-        self.declare_parameter('tick_rate', 1.0)
+        self.declare_parameter('frontier_goal_offset', 0.4)
+        self.declare_parameter('min_frontier_distance', 0.8)
+        self.declare_parameter('no_frontier_idle_threshold', 20)
+        self.declare_parameter('freq', 1.0)
+        self.declare_parameter('mapping_only', False)
 
         self._text_prompt = str(self.get_parameter('text_prompt').value)
         self._image_topic = str(self.get_parameter('image_topic').value)
@@ -63,38 +64,38 @@ class Explorer(Node):
         self._base_frame = str(self.get_parameter('robot_base_frame').value)
         self._map_frame = str(self.get_parameter('map_frame').value)
         self._det_threshold = int(self.get_parameter('detection_threshold').value)
+        self._mapping_only = bool(self.get_parameter('mapping_only').value)
         self._min_frontier_size = int(self.get_parameter('min_frontier_size').value)
         self._blacklist_radius = float(
             self.get_parameter('frontier_blacklist_radius').value
         )
-        tick_rate = float(self.get_parameter('tick_rate').value)
+        self._goal_offset = float(self.get_parameter('frontier_goal_offset').value)
+        self._min_frontier_distance = float(self.get_parameter('min_frontier_distance').value)
+        self._min_frontier_distance_floor = 0.3  # never go below this when relaxing
+        self._no_frontier_idle_threshold = int(
+            self.get_parameter('no_frontier_idle_threshold').value
+        )
+        freq = float(self.get_parameter('freq').value)
 
-        # ------------------------------------------------------------------ #
-        # State
-        # ------------------------------------------------------------------ #
         self.state = State.IDLE
-        self._consecutive_detections: int = 0
+        self._consecutive_detections = 0
         self._last_known_goal: Optional[PoseStamped] = None
         self._current_map: Optional[OccupancyGrid] = None
         self._blacklisted_frontiers: List[Tuple[float, float]] = []
         self._last_frontier: Optional[Tuple[float, float]] = None
-        self._task_in_flight: bool = False
-        self._nav_ready: bool = False
+        self._task_in_flight = False
+        self._nav_ready = False
+        # Consecutive ticks with no frontier found.
+        self._no_frontier_ticks = 0
+        self._no_map_ticks = 0
 
-        # ------------------------------------------------------------------ #
-        # Nav2
-        # ------------------------------------------------------------------ #
         self.nav = BasicNavigator('explorer_nav')
 
-        # ------------------------------------------------------------------ #
         # TF
-        # ------------------------------------------------------------------ #
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-        # ------------------------------------------------------------------ #
         # Subscriptions
-        # ------------------------------------------------------------------ #
         map_qos = QoSProfile(
             depth=1,
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
@@ -102,37 +103,30 @@ class Explorer(Node):
         )
         self.create_subscription(OccupancyGrid, self._map_topic, self._map_cb, map_qos)
 
-        det_topic = self._image_topic + '_detections'
-        self.create_subscription(String, det_topic, self._det_cb, QoSProfile(depth=10))
+        if not self._mapping_only:
+            det_topic = self._image_topic + '_detections'
+            self.create_subscription(String, det_topic, self._det_cb, QoSProfile(depth=10))
 
-        # ------------------------------------------------------------------ #
         # Timer
-        # ------------------------------------------------------------------ #
-        self.create_timer(1.0 / tick_rate, self._tick)
+        self.create_timer(1.0 / freq, self._timer)
 
-        # ------------------------------------------------------------------ #
         # Wait for Nav2 in background so __init__ returns immediately
-        # ------------------------------------------------------------------ #
         threading.Thread(target=self._wait_for_nav2, daemon=True).start()
 
         self.get_logger().info(
             f"Explorer ready. Prompt: '{self._text_prompt}'. Waiting for Nav2..."
         )
 
-    # ---------------------------------------------------------------------- #
     # Startup
-    # ---------------------------------------------------------------------- #
-
     def _wait_for_nav2(self) -> None:
-        self.nav.waitUntilNav2Active()
+        # Use bt_navigator as localizer to skip the default AMCL check —
+        # RTAB-Map handles localization and does not expose amcl/get_state.
+        self.nav.waitUntilNav2Active(localizer='bt_navigator')
         self._nav_ready = True
         self.get_logger().info('Nav2 active. Starting exploration.')
         self.state = State.EXPLORING
 
-    # ---------------------------------------------------------------------- #
     # Callbacks
-    # ---------------------------------------------------------------------- #
-
     def _map_cb(self, msg: OccupancyGrid) -> None:
         self._current_map = msg
 
@@ -167,23 +161,21 @@ class Explorer(Node):
                 f'Detection {self._consecutive_detections}/{self._det_threshold}'
             )
 
-    # ---------------------------------------------------------------------- #
-    # Main tick
-    # ---------------------------------------------------------------------- #
-
-    def _tick(self) -> None:
+    # Main timer
+    def _timer(self) -> None:
         if not self._nav_ready:
             return
 
         if self.state == State.EXPLORING:
-            self._tick_exploring()
+            self._timer_exploring()
         elif self.state == State.NAVIGATING:
-            self._tick_navigating()
+            self._timer_navigating()
 
-    def _tick_exploring(self) -> None:
+    def _timer_exploring(self) -> None:
         # Enough consecutive detections → switch to navigating
         if (
-            self._consecutive_detections >= self._det_threshold
+            not self._mapping_only
+            and self._consecutive_detections >= self._det_threshold
             and self._last_known_goal is not None
         ):
             self.get_logger().info('Object found. Switching to NAVIGATING.')
@@ -213,7 +205,7 @@ class Explorer(Node):
                 )
             self._send_next_frontier()
 
-    def _tick_navigating(self) -> None:
+    def _timer_navigating(self) -> None:
         if not self._task_in_flight:
             return
 
@@ -233,14 +225,16 @@ class Explorer(Node):
             self.state = State.EXPLORING
             self._send_next_frontier()
 
-    # ---------------------------------------------------------------------- #
     # Frontier helpers
-    # ---------------------------------------------------------------------- #
-
     def _send_next_frontier(self) -> None:
         if self._current_map is None:
-            self.get_logger().warn('No map yet, waiting...')
+            self._no_map_ticks += 1
+            if self._no_map_ticks % 5 == 1:
+                self.get_logger().warn(
+                    f'No map yet ({self._no_map_ticks}s), waiting for RTAB-Map...'
+                )
             return
+        self._no_map_ticks = 0
 
         robot_xy = self._get_robot_map_xy()
         if robot_xy is None:
@@ -248,22 +242,55 @@ class Explorer(Node):
 
         frontier = self._pick_frontier(robot_xy)
         if frontier is None:
-            self.get_logger().info('No frontiers remaining. Exploration complete.')
-            self.state = State.IDLE
+            self._no_frontier_ticks += 1
+            if self._no_frontier_ticks >= self._no_frontier_idle_threshold:
+                # Before giving up, try relaxing the minimum distance constraint
+                # in case all remaining frontiers are close-by.
+                if self._min_frontier_distance > self._min_frontier_distance_floor:
+                    self._min_frontier_distance = max(
+                        self._min_frontier_distance_floor,
+                        self._min_frontier_distance * 0.5,
+                    )
+                    self._no_frontier_ticks = 0
+                    self.get_logger().info(
+                        f'No distant frontiers found. Relaxing min_frontier_distance '
+                        f'to {self._min_frontier_distance:.2f} m and retrying.'
+                    )
+                else:
+                    self.get_logger().info('No frontiers remaining. Exploration complete.')
+                    self.state = State.IDLE
+            else:
+                self.get_logger().info(
+                    f'No frontiers yet ({self._no_frontier_ticks}/'
+                    f'{self._no_frontier_idle_threshold}), waiting for map to grow...'
+                )
             return
 
-        self._last_frontier = frontier
-        goal = self._xy_to_pose(frontier[0], frontier[1], yaw=0.0)
+        self._no_frontier_ticks = 0
+        # Restore original configured distance if it was relaxed
+        self._min_frontier_distance = float(
+            self.get_parameter('min_frontier_distance').value
+        )
+
+        gx, gy, yaw = frontier
+        self._last_frontier = (gx, gy)
+        goal = self._xy_to_pose(gx, gy, yaw=yaw)
         self.nav.goToPose(goal)
         self._task_in_flight = True
         self.get_logger().info(
-            f'Navigating to frontier: ({frontier[0]:.2f}, {frontier[1]:.2f})'
+            f'Navigating to frontier: ({gx:.2f}, {gy:.2f}), yaw={math.degrees(yaw):.1f}°'
         )
 
     def _pick_frontier(
         self, robot_xy: Tuple[float, float]
-    ) -> Optional[Tuple[float, float]]:
-        """Return the closest valid frontier centroid (world x, y), or None."""
+    ) -> Optional[Tuple[float, float, float]]:
+        """Return (goal_x, goal_y, yaw) for the closest valid frontier, or None.
+
+        The goal is pulled back from the frontier centroid toward the robot by
+        `frontier_goal_offset` metres so it lands in clear free space rather
+        than on the free/unknown boundary where the inflation layer often marks
+        cells as in-collision.
+        """
         msg = self._current_map
         info = msg.info
         data = np.array(msg.data, dtype=np.int8).reshape(info.height, info.width)
@@ -292,6 +319,14 @@ class Explorer(Node):
             cx = float(np.mean(xs)) * info.resolution + info.origin.position.x
             cy = float(np.mean(ys)) * info.resolution + info.origin.position.y
 
+            dist_to_robot = math.hypot(cx - rx, cy - ry)
+
+            # Skip frontiers too close to the robot — navigating <min distance
+            # is wasteful and causes the planner to immediately succeed without
+            # the robot meaningfully moving.
+            if dist_to_robot < self._min_frontier_distance:
+                continue
+
             # Skip blacklisted regions
             if any(
                 math.hypot(cx - bx, cy - by) < self._blacklist_radius
@@ -299,19 +334,30 @@ class Explorer(Node):
             ):
                 continue
 
-            candidates.append((math.hypot(cx - rx, cy - ry), cx, cy))
+            candidates.append((dist_to_robot, cx, cy))
 
         if not candidates:
             return None
 
         candidates.sort(key=lambda c: c[0])
         _, best_x, best_y = candidates[0]
-        return (best_x, best_y)
 
-    # ---------------------------------------------------------------------- #
+        # Pull the goal back from the frontier toward the robot so it sits in
+        # free space rather than on the unknown boundary.  Yaw faces the frontier
+        # so the robot approaches it head-on.
+        dx = best_x - rx
+        dy = best_y - ry
+        dist = math.hypot(dx, dy)
+        yaw = math.atan2(dy, dx)  # robot faces the frontier
+
+        if dist > 1e-3:
+            pull = min(self._goal_offset, dist * 0.5)
+            best_x -= (dx / dist) * pull
+            best_y -= (dy / dist) * pull
+
+        return (best_x, best_y, yaw)
+
     # Geometry helpers
-    # ---------------------------------------------------------------------- #
-
     def _get_robot_map_xy(self) -> Optional[Tuple[float, float]]:
         try:
             tf = self.tf_buffer.lookup_transform(

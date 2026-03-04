@@ -19,7 +19,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'global_costmap',
-            default_value='voxel',
+            default_value='static',
             choices=['voxel', 'static'],
             description=(
                 'Global costmap source: '
