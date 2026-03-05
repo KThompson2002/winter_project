@@ -1,0 +1,9 @@
+# QueryObject.srv
+string query_text
+---
+geometry_msgs/PoseStamped pose
+string label
+uint32 obs_count
+float32 score
+bool success
+string message
