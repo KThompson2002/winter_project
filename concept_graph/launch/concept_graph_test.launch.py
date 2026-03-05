@@ -12,7 +12,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'global_costmap',
-            default_value='static',
+            default_value='voxel',
             choices=['voxel', 'static'],
             description=(
                 'Global costmap source: '
@@ -30,7 +30,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'server_url',
-            default_value='http://192.168.123.164:8000',
+            default_value='http://127.0.0.1:8000',
             description='Base URL of the VLM inference server on the GPU workstation.',
         ),
         DeclareLaunchArgument(

@@ -570,7 +570,8 @@ class VisionPipeline:
             overlay = rgb.copy()
 
             neg_phrases = GENERIC_NEGATIVES
-            text_labels = [[self.text_prompt]]
+            gdino_text = " . ".join(c.strip() for c in self.gdino_classes)
+            text_labels = [[gdino_text]]
 
             inputs = self.gdino_processor(images=rgb, text=text_labels, return_tensors="pt").to(self._device)
             with torch.no_grad():
