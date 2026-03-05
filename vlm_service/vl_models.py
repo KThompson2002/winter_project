@@ -569,9 +569,9 @@ class VisionPipeline:
             h, w = rgb.shape[:2]
             overlay = rgb.copy()
 
+            goal = extract_goal_phrase(self.text_prompt)
             neg_phrases = GENERIC_NEGATIVES
-            gdino_text = " . ".join(c.strip() for c in self.gdino_classes)
-            text_labels = [[gdino_text]]
+            text_labels = [[goal]]
 
             inputs = self.gdino_processor(images=rgb, text=text_labels, return_tensors="pt").to(self._device)
             with torch.no_grad():
@@ -591,7 +591,6 @@ class VisionPipeline:
             res0 = results[0]
             boxes_xyxy = res0["boxes"].detach().cpu().numpy()
             scores = res0["scores"].detach().cpu().numpy()
-            labels = res0["labels"]
 
             masks_raw = self._sam3_segment_boxes(rgb, boxes_xyxy)
             pairs: List[Tuple] = []  # (Detection, mask ndarray)
@@ -600,22 +599,25 @@ class VisionPipeline:
                 x1, y1, x2, y2 = mask_to_bbox(mask)
                 mask_crop = masked_crop_for_clip(rgb, mask)
 
-                dino_label = str(labels[i])
-                if return_masks:
-                    scores_dict, clip_emb = self.clip_score_phrases(
-                        mask_crop, dino_label, neg_phrases, _return_feat=True
-                    )
-                else:
-                    scores_dict = self.clip_score_phrases(mask_crop, dino_label, neg_phrases)
-                    clip_emb = None
+                # Always get img_feat so we can classify against clip_labels
+                scores_dict, img_feat_list = self.clip_score_phrases(
+                    mask_crop, goal, neg_phrases, _return_feat=True
+                )
+                clip_emb = img_feat_list if return_masks else None
+
+                # Use CLIP to get a specific label from the known clip_labels list
+                img_feat_t = torch.tensor(img_feat_list, device=self._device).unsqueeze(0)
+                class_sims = (img_feat_t @ self.clip_text_features.T).squeeze(0)
+                best_idx = int(torch.argmax(class_sims).item())
+                clip_label = self.clip_labels[best_idx]
 
                 xyz = self._estimate_xyz_from_box(depth, (x1, y1, x2, y2), intrinsics)
 
                 det = Detection(
-                    label=dino_label,
+                    label=clip_label,
                     score=float(scores[i]),
                     box=(float(x1), float(y1), float(x2), float(y2)),
-                    clip_label=dino_label,
+                    clip_label=clip_label,
                     clip_score=float(scores_dict["pos"]),
                     attr_neg_max=float(scores_dict["neg_max"]),
                     attr_margin=float(scores_dict["margin"]),
