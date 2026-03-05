@@ -569,9 +569,8 @@ class VisionPipeline:
             h, w = rgb.shape[:2]
             overlay = rgb.copy()
 
-            goal = extract_goal_phrase(self.text_prompt)
             neg_phrases = GENERIC_NEGATIVES
-            text_labels = [[goal]]
+            text_labels = [[self.text_prompt]]
 
             inputs = self.gdino_processor(images=rgb, text=text_labels, return_tensors="pt").to(self._device)
             with torch.no_grad():
@@ -600,21 +599,22 @@ class VisionPipeline:
                 x1, y1, x2, y2 = mask_to_bbox(mask)
                 mask_crop = masked_crop_for_clip(rgb, mask)
 
+                dino_label = str(labels[i])
                 if return_masks:
                     scores_dict, clip_emb = self.clip_score_phrases(
-                        mask_crop, goal, neg_phrases, _return_feat=True
+                        mask_crop, dino_label, neg_phrases, _return_feat=True
                     )
                 else:
-                    scores_dict = self.clip_score_phrases(mask_crop, goal, neg_phrases)
+                    scores_dict = self.clip_score_phrases(mask_crop, dino_label, neg_phrases)
                     clip_emb = None
 
                 xyz = self._estimate_xyz_from_box(depth, (x1, y1, x2, y2), intrinsics)
 
                 det = Detection(
-                    label=str(labels[i]),
+                    label=dino_label,
                     score=float(scores[i]),
                     box=(float(x1), float(y1), float(x2), float(y2)),
-                    clip_label=goal,
+                    clip_label=dino_label,
                     clip_score=float(scores_dict["pos"]),
                     attr_neg_max=float(scores_dict["neg_max"]),
                     attr_margin=float(scores_dict["margin"]),

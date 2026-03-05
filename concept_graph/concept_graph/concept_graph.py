@@ -155,6 +155,14 @@ class ConceptGraph(Node):
             'save_path', '~/.ros/concept_map.json',
             ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
         )
+        self.declare_parameter(
+            'rtabmap_info_topic', '/info',
+            ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
+        )
+        self.declare_parameter(
+            'reset_on_start', False,
+            ParameterDescriptor(type=ParameterType.PARAMETER_BOOL),
+        )
 
         self._server_infer_url      = self.get_parameter('server_infer_url').value
         self._server_embed_text_url = self.get_parameter('server_embed_text_url').value
@@ -173,6 +181,8 @@ class ConceptGraph(Node):
         self._save_path             = os.path.expanduser(
             self.get_parameter('save_path').value
         )
+        self._rtabmap_info_topic    = self.get_parameter('rtabmap_info_topic').value
+        self._reset_on_start        = bool(self.get_parameter('reset_on_start').value)
 
         # ── Internal state ────────────────────────────────────────────────────
         self.object_map: List[ConceptObject] = []
@@ -221,16 +231,19 @@ class ConceptGraph(Node):
             sensor_qos, callback_group=self._sub_group,
         )
         self.create_subscription(
-            Info, '/rtabmap/info', self._on_rtabmap_info,
+            Info, self._rtabmap_info_topic, self._on_rtabmap_info,
             reliable_qos, callback_group=self._sub_group,
         )
 
         # ── Publishers ────────────────────────────────────────────────────────
         self._user_data_pub = self.create_publisher(
-            UserData, '/rtabmap/user_data_async', reliable_qos,
+            UserData, '/user_data_async', reliable_qos,
         )
         self._markers_pub = self.create_publisher(
             MarkerArray, '/concept_map/markers', reliable_qos,
+        )
+        self._goal_pub = self.create_publisher(
+            PoseStamped, '/goal_pose', reliable_qos,
         )
 
         # ── Service ───────────────────────────────────────────────────────────
@@ -268,12 +281,20 @@ class ConceptGraph(Node):
         if self._infer_in_flight:
             return
         if self.intrinsics is None or self.color_msg is None or self.depth_msg is None:
+            self.get_logger().warn(
+                f'Keyframe skipped — waiting for sensors: '
+                f'color={self.color_msg is not None} '
+                f'depth={self.depth_msg is not None} '
+                f'intrinsics={self.intrinsics is not None}',
+                throttle_duration_sec=5.0,
+            )
             return
 
         color_snap = self.color_msg
         depth_snap = self.depth_msg
 
         self._infer_in_flight = True
+        self.get_logger().info('Keyframe received — spawning inference thread')
         threading.Thread(
             target=self._process_keyframe,
             args=(color_snap, depth_snap),
@@ -458,6 +479,11 @@ class ConceptGraph(Node):
     # ── Persistence ───────────────────────────────────────────────────────────
 
     def _load_from_disk(self) -> None:
+        if self._reset_on_start:
+            if os.path.exists(self._save_path):
+                os.remove(self._save_path)
+            self.get_logger().info('reset_on_start=true — concept map cleared.')
+            return
         if not os.path.exists(self._save_path):
             self.get_logger().info(
                 f'No saved concept map at {self._save_path}. Starting fresh.'
@@ -553,6 +579,16 @@ class ConceptGraph(Node):
         pose.pose.position.z = float(best_obj.centroid_map[2])
         pose.pose.orientation.w = 1.0
 
+        # Nav2 goal — flatten to ground plane for 2D navigation
+        nav_goal = PoseStamped()
+        nav_goal.header.frame_id = self._map_frame
+        nav_goal.header.stamp    = self.get_clock().now().to_msg()
+        nav_goal.pose.position.x = float(best_obj.centroid_map[0])
+        nav_goal.pose.position.y = float(best_obj.centroid_map[1])
+        nav_goal.pose.position.z = 0.0
+        nav_goal.pose.orientation.w = 1.0
+        self._goal_pub.publish(nav_goal)
+
         response.pose      = pose
         response.label     = best_obj.label
         response.obs_count = best_obj.obs_count
@@ -563,8 +599,9 @@ class ConceptGraph(Node):
             f'at ({best_obj.centroid_map[0]:.2f}, '
             f'{best_obj.centroid_map[1]:.2f}, '
             f'{best_obj.centroid_map[2]:.2f}) '
-            f'score={best_sim:.3f}'
+            f'score={best_sim:.3f} — goal sent'
         )
+        self.get_logger().info(response.message)
         return response
 
     # ── Visualisation ─────────────────────────────────────────────────────────
