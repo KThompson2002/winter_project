@@ -43,6 +43,9 @@ import tf2_geometry_msgs  # noqa: F401 — registers PointStamped transform supp
 # RTAB-Map
 from rtabmap_msgs.msg import Info, UserData
 
+# Concept graph interfaces
+from concept_graph_interfaces.srv import QueryObject
+
 
 # ── Data model ────────────────────────────────────────────────────────────────
 
@@ -228,6 +231,14 @@ class ConceptGraph(Node):
         )
         self._markers_pub = self.create_publisher(
             MarkerArray, '/concept_map/markers', reliable_qos,
+        )
+
+        # ── Service ───────────────────────────────────────────────────────────
+        self.create_service(
+            QueryObject,
+            'query_object',
+            self._handle_query_object,
+            callback_group=self._service_group,
         )
 
         # ── Load persisted map ────────────────────────────────────────────────
@@ -485,6 +496,76 @@ class ConceptGraph(Node):
         msg.type = 0   # CV_8U
         msg.data = list(payload)
         self._user_data_pub.publish(msg)
+
+    # ── Service handler ───────────────────────────────────────────────────────
+
+    def _handle_query_object(
+        self,
+        request: QueryObject.Request,
+        response: QueryObject.Response,
+    ) -> QueryObject.Response:
+        with self._lock:
+            objects_snapshot = list(self.object_map)
+
+        if not objects_snapshot:
+            response.success = False
+            response.message = 'Concept map is empty'
+            return response
+
+        query = request.query_text.strip()
+        if not query:
+            response.success = False
+            response.message = 'query_text is empty'
+            return response
+
+        # Embed the query text via the VLM server
+        try:
+            resp = self._session.post(
+                self._server_embed_text_url,
+                data={'text': query},
+                timeout=self._request_timeout,
+            )
+            resp.raise_for_status()
+            query_emb = np.array(resp.json()['embedding'], dtype=np.float32)
+            norm = np.linalg.norm(query_emb)
+            if norm > 0.0:
+                query_emb /= norm
+        except Exception as e:
+            response.success = False
+            response.message = f'Failed to embed query text: {e}'
+            return response
+
+        # Find best matching object by cosine similarity
+        best_sim = -1.0
+        best_obj = None
+        for obj in objects_snapshot:
+            sim = float(np.dot(obj.clip_emb, query_emb))
+            if sim > best_sim:
+                best_sim = sim
+                best_obj = obj
+
+        # Build response
+        pose = PoseStamped()
+        pose.header.frame_id = self._map_frame
+        pose.header.stamp    = self.get_clock().now().to_msg()
+        pose.pose.position.x = float(best_obj.centroid_map[0])
+        pose.pose.position.y = float(best_obj.centroid_map[1])
+        pose.pose.position.z = float(best_obj.centroid_map[2])
+        pose.pose.orientation.w = 1.0
+
+        response.pose      = pose
+        response.label     = best_obj.label
+        response.obs_count = best_obj.obs_count
+        response.score     = float(best_sim)
+        response.success   = True
+        response.message   = (
+            f'Found "{best_obj.label}" (id={best_obj.id}) '
+            f'at ({best_obj.centroid_map[0]:.2f}, '
+            f'{best_obj.centroid_map[1]:.2f}, '
+            f'{best_obj.centroid_map[2]:.2f}) '
+            f'score={best_sim:.3f}'
+        )
+        return response
 
     # ── Visualisation ─────────────────────────────────────────────────────────
 
