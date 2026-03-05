@@ -151,13 +151,15 @@ class Detection:
     attr_margin: Optional[float] = None
     # Optional 3D estimate (meters) from aligned depth
     xyz_m: Optional[Tuple[float, float, float]] = None
+    # Optional CLIP image embedding (512-d, L2-normalized) for concept map
+    clip_emb: Optional[List[float]] = None
 
 # Vision Pipeline Class:
 class VisionPipeline:
     def __init__(
         self,
         *,
-        device: str = "cpu",
+        device: str = "cuda",
         grounding_dino_model_id: str = "IDEA-Research/grounding-dino-tiny",
         clip_model_id: str = "openai/clip-vit-base-patch32",
         text_prompt: str = "a person. a backpack. a chair. a table. a door.",
@@ -311,8 +313,9 @@ class VisionPipeline:
         *,
         rgb: np.ndarray,
         depth: np.ndarray,
-        intrinsics: Tuple[float, float, float, float]
-    ) -> Tuple[List[Detection], np.ndarray]:
+        intrinsics: Tuple[float, float, float, float],
+        return_masks: bool = False,
+    ) -> tuple:
         """
         Run GroundingDINO+CLIP on an RGB-D frame.
 
@@ -590,35 +593,44 @@ class VisionPipeline:
             scores = res0["scores"].detach().cpu().numpy()
             labels = res0["labels"]
 
-            masks = self._sam3_segment_boxes(rgb, boxes_xyxy)
-            i = 0
-            detections: List[Detection] = []
-            for mask in masks:
+            masks_raw = self._sam3_segment_boxes(rgb, boxes_xyxy)
+            pairs: List[Tuple] = []  # (Detection, mask ndarray)
+            for i, mask in enumerate(masks_raw):
                 self._draw_mask_overlay(overlay, mask)
                 x1, y1, x2, y2 = mask_to_bbox(mask)
                 mask_crop = masked_crop_for_clip(rgb, mask)
-                scores_dict = self.clip_score_phrases(mask_crop, goal, neg_phrases)
+
+                if return_masks:
+                    scores_dict, clip_emb = self.clip_score_phrases(
+                        mask_crop, goal, neg_phrases, _return_feat=True
+                    )
+                else:
+                    scores_dict = self.clip_score_phrases(mask_crop, goal, neg_phrases)
+                    clip_emb = None
+
                 xyz = self._estimate_xyz_from_box(depth, (x1, y1, x2, y2), intrinsics)
 
                 det = Detection(
                     label=str(labels[i]),
                     score=float(scores[i]),
                     box=(float(x1), float(y1), float(x2), float(y2)),
-                    # store the *goal phrase* and the pos score
                     clip_label=goal,
                     clip_score=float(scores_dict["pos"]),
                     attr_neg_max=float(scores_dict["neg_max"]),
                     attr_margin=float(scores_dict["margin"]),
                     xyz_m=xyz,
+                    clip_emb=clip_emb,
                 )
 
-                det._attr_margin = float(scores_dict["margin"])  # python allows ad-hoc attrs
-                detections.append(det)
+                det._attr_margin = float(scores_dict["margin"])
                 self._draw_detection(overlay, det)
-                i = i + 1
-            
-            detections.sort(key=lambda d: (d.clip_score if d.clip_score is not None else -1e9), reverse=True)
+                pairs.append((det, mask))
 
+            pairs.sort(key=lambda p: (p[0].clip_score if p[0].clip_score is not None else -1e9), reverse=True)
+            detections = [p[0] for p in pairs]
+
+            if return_masks:
+                return detections, overlay, [p[1] for p in pairs]
             return detections, overlay
 
     def _clip_label_region(
@@ -725,7 +737,7 @@ class VisionPipeline:
             cv2.LINE_AA,
         )
 
-    def clip_score_phrases(self, crop_rgb: "np.ndarray", pos: str, negs: List[str]) -> Dict[str, float]:
+    def clip_score_phrases(self, crop_rgb: "np.ndarray", pos: str, negs: List[str], _return_feat: bool = False) -> dict:
         """ Returns:
         {
             "pos": probability for pos phrase,
@@ -768,8 +780,43 @@ class VisionPipeline:
         sims = (img_feat @ txt_feat.T).squeeze(0)  # cosine sims
         pos_sim = float(sims[0].item())
         neg_max = float(sims[1:].max().item()) if sims.numel() > 1 else -1e9
-        return {"pos": pos_sim, "neg_max": neg_max, "margin": pos_sim - neg_max}\
+        scores = {"pos": pos_sim, "neg_max": neg_max, "margin": pos_sim - neg_max}
+        if _return_feat:
+            return scores, img_feat.squeeze(0).cpu().tolist()
+        return scores
         
+    def embed_image(self, crop_rgb: np.ndarray) -> List[float]:
+        """Return a normalized 512-d CLIP image embedding for the given crop."""
+        img_inputs = self.clip_processor(images=crop_rgb, return_tensors="pt").to(self._device)
+        with self.torch.no_grad():
+            img_feat = self.clip_model.get_image_features(**img_inputs)
+            if not self.torch.is_tensor(img_feat):
+                if hasattr(img_feat, "pooler_output"):
+                    img_feat = img_feat.pooler_output
+                elif hasattr(img_feat, "last_hidden_state"):
+                    img_feat = img_feat.last_hidden_state.mean(dim=1)
+                else:
+                    raise RuntimeError(f"Unexpected get_image_features output: {type(img_feat)}")
+            img_feat = img_feat.float()
+            img_feat = img_feat / img_feat.norm(dim=-1, keepdim=True)
+        return img_feat.squeeze(0).cpu().tolist()
+
+    def embed_text(self, text: str) -> List[float]:
+        """Return a normalized 512-d CLIP text embedding for the given string."""
+        txt_inputs = self.clip_processor(text=[text], return_tensors="pt", padding=True).to(self._device)
+        with self.torch.no_grad():
+            txt_feat = self.clip_model.get_text_features(**txt_inputs)
+            if not self.torch.is_tensor(txt_feat):
+                if hasattr(txt_feat, "pooler_output"):
+                    txt_feat = txt_feat.pooler_output
+                elif hasattr(txt_feat, "last_hidden_state"):
+                    txt_feat = txt_feat.last_hidden_state.mean(dim=1)
+                else:
+                    raise RuntimeError(f"Unexpected get_text_features output: {type(txt_feat)}")
+            txt_feat = txt_feat.float()
+            txt_feat = txt_feat / txt_feat.norm(dim=-1, keepdim=True)
+        return txt_feat.squeeze(0).cpu().tolist()
+
     def _sam3_segment_boxes(
         self,
         rgb: np.ndarray,
