@@ -185,9 +185,10 @@ local_costmap:
           marking: true
           clearing: true
           obstacle_max_range: 4.0    # shorter than global — local window is only 3x3 m
-          obstacle_min_range: 0.0
+          obstacle_min_range: 0.25
           raytrace_max_range: 5.0
           raytrace_min_range: 0.0
+          observation_persistence: 0.3 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 5.0

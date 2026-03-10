@@ -192,6 +192,7 @@ class ConceptGraph(Node):
         # ── Internal state ────────────────────────────────────────────────────
         self.object_map: List[ConceptObject] = []
         self._next_id         = 0
+        self._current_goal_id: Optional[int] = None
         self.color_msg:  Optional[Image] = None
         self.depth_msg:  Optional[Image] = None
         self.intrinsics: Optional[Tuple[float, float, float, float]] = None
@@ -601,6 +602,7 @@ class ConceptGraph(Node):
         nav_goal.pose.position.z = 0.0
         nav_goal.pose.orientation.w = 1.0
         self._goal_pub.publish(nav_goal)
+        self._current_goal_id = best_obj.id
 
         response.pose      = pose
         response.label     = best_obj.label
@@ -642,10 +644,11 @@ class ConceptGraph(Node):
             sphere.pose.orientation.w = 1.0
             s = min(0.3, 0.1 + obj.obs_count * 0.02)
             sphere.scale.x = sphere.scale.y = sphere.scale.z = s
-            sphere.color.r = 0.2
-            sphere.color.g = 0.8
-            sphere.color.b = 0.4
-            sphere.color.a = 0.8
+            is_goal = (obj.id == self._current_goal_id)
+            sphere.color.r = 1.0 if is_goal else 0.2
+            sphere.color.g = 0.0 if is_goal else 0.8
+            sphere.color.b = 0.0 if is_goal else 0.4
+            sphere.color.a = 1.0 if is_goal else 0.8
 
             text = Marker()
             text.header.frame_id = self._map_frame
