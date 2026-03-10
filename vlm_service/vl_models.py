@@ -310,7 +310,15 @@ class VisionPipeline:
                 neg_inputs = self.clip_processor(
                     text=GENERIC_NEGATIVES, return_tensors="pt", padding=True,
                 ).to(self._device)
-                neg_feats = self.clip_model.get_text_features(**neg_inputs).float()
+                neg_feats = self.clip_model.get_text_features(**neg_inputs)
+                if not torch.is_tensor(neg_feats):
+                    if hasattr(neg_feats, "pooler_output"):
+                        neg_feats = neg_feats.pooler_output
+                    elif hasattr(neg_feats, "last_hidden_state"):
+                        neg_feats = neg_feats.last_hidden_state.mean(dim=1)
+                    else:
+                        raise RuntimeError(f"Unexpected get_text_features output type: {type(neg_feats)}")
+                neg_feats = neg_feats.float()
                 self.clip_neg_features = neg_feats / neg_feats.norm(dim=-1, keepdim=True)
 
 
