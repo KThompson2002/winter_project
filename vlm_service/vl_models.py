@@ -442,7 +442,15 @@ class VisionPipeline:
                 # Get CLIP image embedding
                 img_inputs = self.clip_processor(images=mask_crop, return_tensors="pt").to(self._device)
                 with torch.no_grad():
-                    img_feat = self.clip_model.get_image_features(**img_inputs).float()
+                    img_feat = self.clip_model.get_image_features(**img_inputs)
+                    if not torch.is_tensor(img_feat):
+                        if hasattr(img_feat, "pooler_output"):
+                            img_feat = img_feat.pooler_output
+                        elif hasattr(img_feat, "last_hidden_state"):
+                            img_feat = img_feat.last_hidden_state.mean(dim=1)
+                        else:
+                            raise RuntimeError(f"Unexpected get_image_features output type: {type(img_feat)}")
+                    img_feat = img_feat.float()
                     img_feat = img_feat / img_feat.norm(dim=-1, keepdim=True)
 
                 # Background filter — drop floor/wall/ceiling

@@ -93,11 +93,11 @@ class ConceptGraph(Node):
 
         # ── Parameters ────────────────────────────────────────────────────────
         self.declare_parameter(
-            'server_infer_url', 'http://127.0.0.1:8000/infer',
+            'server_infer_url', 'http://127.0.0.1:8080/infer',
             ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
         )
         self.declare_parameter(
-            'server_embed_text_url', 'http://127.0.0.1:8000/embed_text',
+            'server_embed_text_url', 'http://127.0.0.1:8080/embed_text',
             ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
         )
         self.declare_parameter(
