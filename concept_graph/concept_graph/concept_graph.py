@@ -163,6 +163,10 @@ class ConceptGraph(Node):
             'reset_on_start', False,
             ParameterDescriptor(type=ParameterType.PARAMETER_BOOL),
         )
+        self.declare_parameter(
+            'inference_pipeline', 'sam_clip',
+            ParameterDescriptor(type=ParameterType.PARAMETER_STRING),
+        )
 
         self._server_infer_url      = self.get_parameter('server_infer_url').value
         self._server_embed_text_url = self.get_parameter('server_embed_text_url').value
@@ -183,6 +187,7 @@ class ConceptGraph(Node):
         )
         self._rtabmap_info_topic    = self.get_parameter('rtabmap_info_topic').value
         self._reset_on_start        = bool(self.get_parameter('reset_on_start').value)
+        self._inference_pipeline    = self.get_parameter('inference_pipeline').value
 
         # ── Internal state ────────────────────────────────────────────────────
         self.object_map: List[ConceptObject] = []
@@ -369,6 +374,7 @@ class ConceptGraph(Node):
             'text_threshold': str(self._text_threshold),
             'jpeg_quality':   str(self._jpeg_quality),
             'return_masks':   'true',
+            'pipeline':       self._inference_pipeline,
         }
 
         resp = self._session.post(
@@ -419,24 +425,31 @@ class ConceptGraph(Node):
         centroid_map: np.ndarray,
         emb: np.ndarray,
     ) -> None:
-        candidates = [
-            obj for obj in self.object_map
-            if np.linalg.norm(obj.centroid_map - centroid_map) < self._spatial_threshold
-        ]
+        best_score = 0.0
+        best_obj   = None
 
-        if not candidates:
-            self._add_object(label, centroid_map, emb)
-            return
+        for obj in self.object_map:
+            dist = float(np.linalg.norm(obj.centroid_map - centroid_map))
 
-        best_sim = -1.0
-        best_obj = None
-        for obj in candidates:
-            sim = float(np.dot(obj.clip_emb, emb))
-            if sim > best_sim:
-                best_sim = sim
-                best_obj = obj
+            # Loose pre-filter — don't compute CLIP sim for very distant objects
+            if dist > self._spatial_threshold * 2.0:
+                continue
 
-        if best_sim >= self._cosine_threshold:
+            clip_sim = float(np.dot(obj.clip_emb, emb))
+            if clip_sim < self._cosine_threshold:
+                continue
+
+            # Geometric similarity: 1.0 = same centroid, 0.0 = at spatial_threshold
+            geo_sim = max(0.0, 1.0 - dist / self._spatial_threshold)
+
+            # Joint score — normalized sum, each term in [0,1] so result in [0,1]
+            joint = (geo_sim + clip_sim) / 2.0
+
+            if joint > best_score:
+                best_score = joint
+                best_obj   = obj
+
+        if best_obj is not None:
             self._merge_object(best_obj, centroid_map, emb)
         else:
             self._add_object(label, centroid_map, emb)
@@ -614,6 +627,8 @@ class ConceptGraph(Node):
             objects_snapshot = list(self.object_map)
 
         for obj in objects_snapshot:
+            if obj.obs_count < 5:
+                continue
             sphere = Marker()
             sphere.header.frame_id = self._map_frame
             sphere.header.stamp    = now

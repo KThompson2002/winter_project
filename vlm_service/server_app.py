@@ -148,6 +148,7 @@ async def infer(
     text_threshold: float = Form(0.25),
     jpeg_quality: int = Form(80),
     return_masks: bool = Form(False),
+    pipeline: str = Form(""),
 ) -> Response:
     global _PIPELINE
     if _PIPELINE is None:
@@ -168,7 +169,17 @@ async def infer(
     jpeg_quality = int(max(1, min(100, int(jpeg_quality))))
 
     # Serialize inference to avoid races if prompt/threshold overrides mutate pipeline state
+    _PIPELINE_MAP = {
+        'sam_clip':     vl_models.Pipeline.SAM_CLIP,
+        'sam3_only':    vl_models.Pipeline.SAM3_ONLY,
+        'dino_sam_clip': vl_models.Pipeline.DINO_SAM_CLIP,
+        'dino_clip':    vl_models.Pipeline.DINO_CLIP,
+        'dino_clip_sam': vl_models.Pipeline.DINO_CLIP_SAM,
+    }
+
     with _LOCK:
+        if pipeline.strip() and pipeline in _PIPELINE_MAP:
+            _PIPELINE.state = _PIPELINE_MAP[pipeline]
         if text_prompt.strip():
             _PIPELINE.set_text_prompt(text_prompt)
         _PIPELINE.box_threshold = float(box_threshold)

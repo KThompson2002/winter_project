@@ -306,6 +306,13 @@ class VisionPipeline:
                 text_feats = text_feats.float()
                 self.clip_text_features = text_feats / text_feats.norm(dim=-1, keepdim=True)
 
+                # Precompute background/negative features for SAM_CLIP filtering
+                neg_inputs = self.clip_processor(
+                    text=GENERIC_NEGATIVES, return_tensors="pt", padding=True,
+                ).to(self._device)
+                neg_feats = self.clip_model.get_text_features(**neg_inputs).float()
+                self.clip_neg_features = neg_feats / neg_feats.norm(dim=-1, keepdim=True)
+
 
 
     def infer(
@@ -384,9 +391,6 @@ class VisionPipeline:
             h, w = rgb.shape[:2]
             overlay = rgb.copy()
 
-            goal = extract_goal_phrase(self.text_prompt)
-            neg_phrases = GENERIC_NEGATIVES
-
             # Automatic mask generation: grid of points over the image
             grid_n = 8
             xs = np.linspace(0, w - 1, grid_n, dtype=int)
@@ -412,8 +416,13 @@ class VisionPipeline:
             masks = masks[:, 0, :, :]
             masks = (masks > 0).to(torch.uint8).numpy()
 
+            MIN_AREA = 1500   # pixels — skip tiny/spurious masks
+            BG_THRESHOLD = 0.25  # drop mask if max background similarity exceeds this
+
             detections: List[Detection] = []
-            for i, mask in enumerate(masks):
+            for mask in masks:
+                if int(mask.sum()) < MIN_AREA:
+                    continue
                 bbox = mask_to_bbox(mask)
                 if bbox is None:
                     continue
@@ -421,24 +430,48 @@ class VisionPipeline:
                 mask_crop = masked_crop_for_clip(rgb, mask)
                 if mask_crop is None:
                     continue
-                scores_dict = self.clip_score_phrases(mask_crop, goal, neg_phrases)
+
+                # Get CLIP image embedding
+                img_inputs = self.clip_processor(images=mask_crop, return_tensors="pt").to(self._device)
+                with torch.no_grad():
+                    img_feat = self.clip_model.get_image_features(**img_inputs).float()
+                    img_feat = img_feat / img_feat.norm(dim=-1, keepdim=True)
+
+                # Background filter — drop floor/wall/ceiling
+                bg_sims = (img_feat @ self.clip_neg_features.T).squeeze(0)
+                bg_max = float(bg_sims.max().item())
+                if bg_max > BG_THRESHOLD:
+                    continue
+
+                # Classify against clip_labels
+                obj_sims = (img_feat @ self.clip_text_features.T).squeeze(0)
+                best_idx = int(torch.argmax(obj_sims).item())
+                clip_label = self.clip_labels[best_idx]
+                clip_score = float(obj_sims[best_idx].item())
+
+                img_feat_list = img_feat.squeeze(0).cpu().tolist()
                 xyz = self._estimate_xyz_from_box(depth, (x1, y1, x2, y2), intrinsics)
+                if xyz is None or xyz[2] > 4.0:
+                    continue
 
                 det = Detection(
-                    label="sam_region",
-                    score=float(scores_dict["pos"]),
+                    label=clip_label,
+                    score=clip_score,
                     box=(float(x1), float(y1), float(x2), float(y2)),
-                    clip_label=goal,
-                    clip_score=float(scores_dict["pos"]),
-                    attr_neg_max=float(scores_dict["neg_max"]),
-                    attr_margin=float(scores_dict["margin"]),
+                    clip_label=clip_label,
+                    clip_score=clip_score,
+                    attr_neg_max=bg_max,
+                    attr_margin=clip_score - bg_max,
                     xyz_m=xyz,
+                    clip_emb=img_feat_list if return_masks else None,
                 )
                 detections.append(det)
                 self._draw_mask_overlay(overlay, mask)
                 self._draw_detection(overlay, det)
 
-            detections.sort(key=lambda d: (d.clip_score if d.clip_score is not None else -1e9), reverse=True)
+            detections.sort(key=lambda d: d.clip_score, reverse=True)
+            if return_masks:
+                return detections, overlay, []
             return detections, overlay
 
         elif self.state == Pipeline.DINO_CLIP:
