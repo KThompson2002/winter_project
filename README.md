@@ -49,7 +49,7 @@ The `cyclonedds_ws` inside `unitree_ros2` must be built **before** sourcing any 
 # If /opt/ros/kilted/setup.bash is in your ~/.bashrc, comment it out first,
 # then open a fresh terminal before running the following.
 
-cd ~/WinterProject/ws/src/unitree/unitree_ros2/cyclonedds_ws
+cd /ws/src/unitree/unitree_ros2/cyclonedds_ws
 colcon build --packages-select cyclonedds
 source /opt/ros/kilted/setup.bash
 colcon build   # builds unitree_go and unitree_api
@@ -72,7 +72,7 @@ Also set the IP of the Ethernet interface to `192.168.123.99` (mask `255.255.255
 Every terminal that interacts with the Go2 must source this script, before any other ROS2 sourcing:
 
 ```bash
-source ~/WinterProject/ws/src/unitree/unitree_ros2/setup.sh
+source /ws/src/unitree/unitree_ros2/setup.sh
 ```
 
 ---
@@ -88,7 +88,7 @@ The VLM inference server runs on a separate GPU workstation. The source lives at
 On the workstation, start the FastAPI server:
 
 ```bash
-cd /path/to/vlm_service
+cd /vlm_service
 uvicorn server_app:app --host 0.0.0.0 --port 8000
 ```
 
