@@ -37,7 +37,7 @@ Python dependencies (for VLM nodes):
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install numpy scipy requests opencv-python
+pip install numpy scipy requests opencv-python torch torchvision transformers Pillow fastapi
 ```
 
 ---
