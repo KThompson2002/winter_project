@@ -45,7 +45,6 @@ def generate_launch_description():
                 'a bookshelf. a cabinet. a backpack. a laptop. a monitor. '
                 'a bottle. a cup. a person. a trash can. a box.'
             ),
-            description='GroundingDINO text prompt used during mapping.',
         ),
 
         # RTAB-Map SLAM + Nav2 (no exploration node, goals via RViz)
