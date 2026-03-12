@@ -87,7 +87,7 @@ source /ws/src/unitree/unitree_ros2/setup.sh
 The VLM inference server runs on a separate GPU workstation. The source lives at:
 
 ```
-/home/lea1212/WinterProject/ws/src/winter_project/vlm_service/
+ws/src/winter_project/vlm_service/
 ```
 
 On the workstation, start the FastAPI server:
@@ -103,3 +103,28 @@ Then port-forward from the robot's computer so the ROS nodes can reach it at `ht
 ssh -L 8000:localhost:8000 <user>@<workstation-ip>
 ```
 
+## 5. Launch Files
+
+### `concept_graph/launch/concept_graph_test.launch.py` — Semantic Mapping
+
+The primary launch file for building and querying a semantic object map while the robot moves.
+
+### `go2_control/launch/slam_nav.launch.py` — SLAM + Navigation base
+
+The shared base launch used by all top-level launch files.
+
+**Starts:**
+- `rtabmap.launch.py` — RTAB-Map SLAM node + topic restamper
+- `nav2.launch.py` — Full Nav2 stack (planner, controller, BT navigator, lifecycle manager)
+
+### `go2_control/launch/nav2.launch.py` — Nav2 Navigation Stack
+
+Brings up the full Nav2 pipeline for path planning and execution.
+
+### `go2_control/launch/rtabmap.launch.py` — RTAB-Map SLAM
+
+Runs RTAB-Map with RGB-D + lidar fusion. Consumes restamped sensor topics.
+
+### `vlm_vision/launch/vision.launch.xml` — VLM Detection Pipeline
+
+Standalone vision pipeline for real-time object detection and goal publishing.
