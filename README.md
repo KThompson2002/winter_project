@@ -103,7 +103,7 @@ Then port-forward from the robot's computer so the ROS nodes can reach it at `ht
 ssh -L 8000:localhost:8000 <user>@<workstation-ip>
 ```
 
-## 5. Launch Files
+## 4. Launch Files
 
 ### `concept_graph/launch/concept_graph_test.launch.py` — Semantic Mapping
 
