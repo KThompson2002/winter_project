@@ -13,6 +13,11 @@ A ROS2 system for autonomous navigation and semantic object mapping on the Unitr
 | `unitree/go2_description` | URDF/xacro robot model |
 | `unitree/unitree_ros2` | CycloneDDS + Unitree message definitions |
 
+## Overview
+
+<img width="3400" height="2680" alt="Winter Project Architecture" src="https://github.com/user-attachments/assets/33885dfc-0c04-4b64-ad81-f52349eaa74c" />
+
+
 ## 1. Prerequisites
 
 Install ROS2 Kilted and required packages:
